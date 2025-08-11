@@ -36,8 +36,8 @@ Bot financeiro pessoal inteligente via WhatsApp com controle de saldo, metas, re
 
 ### 1. Clone o repositório
 ```bash
-git clone https://github.com/seu-usuario/bot-financeiro-whatsapp.git
-cd bot-financeiro-whatsapp
+git clone https://github.com/rrodriguesp9/BotFinWhatsApp.git
+cd BotFinWhatsApp
 ```
 
 ### 2. Instale as dependências
@@ -168,4 +168,4 @@ MIT License - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
 - 📧 Email: suporte@botfinanceiro.com
 - 💬 WhatsApp: +55 11 99999-9999
-- 📖 Documentação: [docs.botfinanceiro.com](https://docs.botfinanceiro.com) 
+- 📖 Documentação: [docs.botfinanceiro.com](https://docs.botfinanceiro.com)
