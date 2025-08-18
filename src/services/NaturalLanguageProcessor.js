@@ -1,402 +1,660 @@
-const nlp = require('compromise');
-const moment = require('moment');
+const nlp = require("compromise");
+const moment = require("moment");
 
 class NaturalLanguageProcessor {
   constructor() {
     // Configurar compromise para português
-    nlp.extend(require('compromise-numbers'));
-    nlp.extend(require('compromise-dates'));
+    nlp.extend(require("compromise-numbers"));
+    // nlp.extend(require('compromise-dates')); // Comentado temporariamente
   }
 
-  // Processar mensagem e extrair intenção
+  // ✅ MÉTODO PRINCIPAL melhorado
   processMessage(message) {
     const text = message.toLowerCase().trim();
-    
-    // Padrões de regex para diferentes tipos de comandos
-    const patterns = {
-      // Receitas
-      income: [
-        /(?:recebi|ganhei|entrou|depositei|salário|freela|pagamento)\s+(?:de\s+)?r?\$?\s*([\d.,]+)/i,
-        /(?:recebi|ganhei|entrou|depositei)\s+([\d.,]+)\s+(?:reais?|r\$)/i,
-        /(?:salário|freela|pagamento)\s+(?:de\s+)?([\d.,]+)/i
-      ],
-      
-      // Despesas
-      expense: [
-        /(?:gastei|paguei|comprei|compras?|conta|boleto)\s+(?:de\s+)?r?\$?\s*([\d.,]+)/i,
-        /(?:gastei|paguei|comprei)\s+([\d.,]+)\s+(?:reais?|r\$)/i,
-        /(?:conta|boleto)\s+(?:de\s+)?([\d.,]+)/i,
-        /(?:uber|99|taxi|ônibus|metrô|transporte)\s+([\d.,]+)/i,
-        /(?:almoço|jantar|café|lanche|restaurante)\s+([\d.,]+)/i,
-        /(?:mercado|supermercado|feira)\s+([\d.,]+)/i
-      ],
-      
-      // Consultas
-      balance: [
-        /(?:quanto|saldo|tenho|disponível|dinheiro)\s+(?:tenho|agora|disponível)?/i,
-        /(?:meu\s+)?saldo/i,
-        /(?:quanto\s+)?(?:dinheiro|valor)\s+(?:tenho|disponível)/i
-      ],
-      
-      // Relatórios
-      report: [
-        /(?:resumo|relatório|extrato)\s+(?:da\s+)?(?:semana|mês|mês\s+passado)/i,
-        /(?:gastos?|despesas?)\s+(?:da\s+)?(?:semana|mês)/i,
-        /(?:relatório|resumo)\s+(?:deste|do)\s+(?:mês|semana)/i
-      ],
-      
-      // Metas
-      goal: [
-        /(?:meta|limite)\s+(?:de\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i,
-        /(?:definir|criar)\s+(?:meta|limite)\s+(?:de\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i
-      ],
-      
-      // Cofrinhos
-      savings: [
-        /(?:cofrinho|objetivo|guardar|poupar)\s+(?:para\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i,
-        /(?:criar\s+)?(?:cofrinho|objetivo)\s+([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i
-      ],
-      
-      // Divisão de despesas
-      split: [
-        /(?:dividir|dividido)\s+([a-záàâãéèêíïóôõöúçñ]+)\s+(?:de\s+)?([\d.,]+)\s+(?:entre|por)\s+(\d+)/i,
-        /([\d.,]+)\s+(?:dividido|dividir)\s+(?:entre|por)\s+(\d+)/i
-      ],
-      
-      // Exportação
-      export: [
-        /(?:exportar|exporte|baixar|download)\s+(?:relatório|dados)\s+(?:em|para)\s+(pdf|csv|excel)/i,
-        /(?:exporte|baixar)\s+(?:este\s+)?(?:mês|semana)\s+(?:em|para)\s+(pdf|csv|excel)/i
-      ],
-      
-      // Ajuda
-      help: [
-        /(?:ajuda|help|comandos|como|o\s+que\s+posso)/i
-      ],
-      
-      // Modo silencioso
-      silent: [
-        /(?:pausar|silenciar|silêncio)\s+(?:notificações?|alertas?)\s+(?:por\s+)?(\d+)\s+(?:dias?|dia)/i,
-        /(?:modo\s+)?(?:silencioso|silêncio)\s+(?:por\s+)?(\d+)\s+(?:dias?|dia)/i
-      ]
-    };
+    console.log("🧠 Processando texto:", text);
 
-    // Testar cada padrão
-    for (const [intention, patternList] of Object.entries(patterns)) {
-      for (const pattern of patternList) {
-        const match = text.match(pattern);
-        if (match) {
-          return this.extractIntent(intention, match, text);
-        }
-      }
-    }
+    // Normalizar texto
+    const normalizedText = this.normalizeText(text);
 
-    // Se não encontrou padrão específico, tentar extração genérica
-    return this.extractGenericIntent(text);
-  }
+    // Detectar intenção principal
+    const intention = this.detectIntention(normalizedText);
 
-  // Extrair intenção específica
-  extractIntent(intention, match, originalText) {
-    const extracted = {
-      intention,
-      originalText,
-      confidence: 0.9,
-      extracted: {}
-    };
+    // Extrair dados específicos baseado na intenção
+    let extracted = {};
 
     switch (intention) {
-      case 'income':
-        extracted.extracted = {
-          type: 'income',
-          amount: this.extractAmount(match[1]),
-          category: this.extractCategory(originalText),
-          description: this.extractDescription(originalText),
-          date: this.extractDate(originalText)
-        };
+      case "expense":
+        extracted = this.extractExpenseData(normalizedText);
         break;
+      case "income":
+        extracted = this.extractIncomeData(normalizedText);
+        break;
+      case "balance":
+        extracted = this.extractBalanceQuery(normalizedText);
+        break;
+      case "report":
+        extracted = this.extractReportQuery(normalizedText);
+        break;
+      case "goal":
+        extracted = this.extractGoalData(normalizedText);
+        break;
+      default:
+        extracted = this.extractGenericData(normalizedText);
+    }
 
-      case 'expense':
-        extracted.extracted = {
-          type: 'expense',
-          amount: this.extractAmount(match[1]),
-          category: this.extractCategory(originalText),
-          description: this.extractDescription(originalText),
-          date: this.extractDate(originalText)
-        };
-        break;
+    const confidence = this.calculateConfidence(intention, extracted);
 
-      case 'balance':
-        extracted.extracted = {
-          type: 'query',
-          query: 'balance'
-        };
-        break;
+    return {
+      intention,
+      originalText: message,
+      confidence,
+      extracted: {
+        type: intention === "income" ? "income" : "expense",
+        ...extracted,
+      },
+    };
+  }
 
-      case 'report':
-        extracted.extracted = {
-          type: 'query',
-          query: 'report',
-          period: this.extractPeriod(originalText)
-        };
-        break;
+  // ✅ NORMALIZAR texto para melhor processamento
+  normalizeText(text) {
+    return text
+      .replace(/\b(reais?|real|brl)\b/gi, "reais")
+      .replace(/\b(r\$|rs)\b/gi, "reais")
+      .replace(/\b(comprei|paguei|pago|gastei|gasto|despesa)\b/gi, "gastei")
+      .replace(/\b(recebi|receita|ganho|ganhei|salario|salário)\b/gi, "recebi")
+      .replace(/\b(mercado|supermercado|super)\b/gi, "mercado")
+      .replace(/\b(farmacia|farmácia|drogaria)\b/gi, "farmacia")
+      .replace(
+        /\b(posto|gasolina|combustivel|combustível|alcool|álcool)\b/gi,
+        "posto"
+      )
+      .replace(/\b(conta de luz|energia|light|cemig)\b/gi, "conta_luz")
+      .replace(/\b(conta de agua|água|saneamento)\b/gi, "conta_agua")
+      .replace(/\b(telefone|celular|tim|vivo|claro|oi)\b/gi, "telefone");
+  }
 
-      case 'goal':
-        extracted.extracted = {
-          type: 'goal',
-          category: match[1],
-          limit: this.extractAmount(match[2])
-        };
-        break;
+  // ✅ DETECTAR intenção principal
+  detectIntention(text) {
+    // Padrões de despesa
+    const expensePatterns = [
+      /\b(gastei|comprei|paguei|pago|despesa)\b/gi,
+      /\b(no mercado|na farmacia|no posto|na loja)\b/gi,
+      /\b(conta de|pagar|pagamento)\b/gi,
+    ];
 
-      case 'savings':
-        extracted.extracted = {
-          type: 'savings',
-          name: match[1],
-          target: this.extractAmount(match[2])
-        };
-        break;
+    // Padrões de receita
+    const incomePatterns = [
+      /\b(recebi|receita|ganho|ganhei|salario|salário)\b/gi,
+      /\b(do trabalho|do emprego|freelance|extra)\b/gi,
+    ];
 
-      case 'split':
-        extracted.extracted = {
-          type: 'split',
-          description: match[1] || 'despesa dividida',
-          totalAmount: this.extractAmount(match[2] || match[1]),
-          people: parseInt(match[3] || match[2])
-        };
-        break;
+    // Padrões de consulta de saldo
+    const balancePatterns = [
+      /\b(saldo|quanto tenho|dinheiro|disponivel|disponível)\b/gi,
+      /\b(meu saldo|saldo atual)\b/gi,
+    ];
 
-      case 'export':
-        extracted.extracted = {
-          type: 'export',
-          format: match[1],
-          period: this.extractPeriod(originalText)
-        };
-        break;
+    // Padrões de relatório
+    const reportPatterns = [
+      /\b(gastos|resumo|relatorio|relatório|extrato)\b/gi,
+      /\b(semana|mes|mês|hoje|ontem)\b/gi,
+      /\b(por categoria|categorias)\b/gi,
+    ];
 
-      case 'help':
-        extracted.extracted = {
-          type: 'help'
-        };
-        break;
+    // Padrões de meta
+    const goalPatterns = [
+      /\b(meta|limite|orçamento|orcamento)\b/gi,
+      /\b(meta de|limite de|orcamento de|orçamento de)\b/gi,
+    ];
 
-      case 'silent':
-        extracted.extracted = {
-          type: 'silent',
-          days: parseInt(match[1])
-        };
-        break;
+    // Verificar padrões na ordem de prioridade
+    if (expensePatterns.some((pattern) => pattern.test(text))) {
+      return "expense";
+    }
+    if (incomePatterns.some((pattern) => pattern.test(text))) {
+      return "income";
+    }
+    if (balancePatterns.some((pattern) => pattern.test(text))) {
+      return "balance";
+    }
+    if (reportPatterns.some((pattern) => pattern.test(text))) {
+      return "report";
+    }
+    if (goalPatterns.some((pattern) => pattern.test(text))) {
+      return "goal";
+    }
+
+    return "unknown";
+  }
+
+  // ✅ EXTRAIR dados de despesa com múltiplos padrões
+  extractExpenseData(text) {
+    const extracted = {
+      amount: null,
+      category: "outros",
+      description: text,
+      date: new Date(),
+      establishment: null,
+    };
+
+    // === EXTRAIR VALOR ===
+    const valuePatterns = [
+      // "gastei 50", "paguei 100 reais"
+      /(?:gastei|paguei|pago|comprei)\s+(\d{1,4}(?:[,\.]\d{1,2})?)\s*(?:reais?|real|r\$|brl)?/gi,
+      // "50 reais no mercado"
+      /(\d{1,4}(?:[,\.]\d{1,2})?)\s*(?:reais?|real|r\$|brl)?\s+(?:no|na|do|da|em)/gi,
+      // "R$ 50", "rs 25"
+      /(?:r\$|rs)\s*(\d{1,4}(?:[,\.]\d{1,2})?)/gi,
+      // Números isolados (menor prioridade)
+      /(\d{1,4}(?:[,\.]\d{1,2})?)/g,
+    ];
+
+    for (const pattern of valuePatterns) {
+      const matches = [...text.matchAll(pattern)];
+      for (const match of matches) {
+        const amount = this.parseAmount(match[1]);
+        if (amount && amount > 0 && amount < 50000) {
+          extracted.amount = amount;
+          console.log(`💰 Valor encontrado: R$ ${amount}`);
+          break;
+        }
+      }
+      if (extracted.amount) break;
+    }
+
+    // === EXTRAIR ESTABELECIMENTO ===
+    const establishmentPatterns = [
+      // "no mercado", "na farmacia"
+      /(?:no|na|do|da)\s+([a-záàâãçéêíóôõú\s]+?)(?:\s|$|,|\.|!|\?)/gi,
+      // "mercado extra", "farmacia pacheco"
+      /(?:gastei|comprei|paguei).*?(?:no|na|do|da)\s+([a-záàâãçéêíóôõú\s]+?)(?:\s|$|,|\.|!|\?)/gi,
+      // Estabelecimentos diretos "mercado", "farmacia"
+      /\b(mercado|farmacia|posto|padaria|restaurante|lanchonete|cinema|teatro)\b/gi,
+    ];
+
+    for (const pattern of establishmentPatterns) {
+      const matches = [...text.matchAll(pattern)];
+      for (const match of matches) {
+        let establishment = match[1] ? match[1].trim() : match[0].trim();
+        establishment = establishment
+          .replace(/\b(de|da|do|na|no|com|para|e|a|o|reais?|real)\b/gi, "")
+          .trim();
+
+        if (establishment.length >= 3) {
+          extracted.establishment = this.capitalizeFirst(establishment);
+          console.log(`🏪 Estabelecimento: ${extracted.establishment}`);
+          break;
+        }
+      }
+      if (extracted.establishment) break;
+    }
+
+    // === DETERMINAR CATEGORIA ===
+    extracted.category = this.determineAdvancedCategory(
+      extracted.establishment,
+      text
+    );
+
+    // === GERAR DESCRIÇÃO ===
+    extracted.description = this.generateDescription(extracted, text);
+
+    return extracted;
+  }
+
+  // ✅ EXTRAIR dados de receita
+  extractIncomeData(text) {
+    const extracted = {
+      amount: null,
+      category: "receita",
+      description: text,
+      date: new Date(),
+      source: null,
+    };
+
+    // Extrair valor (mesma lógica)
+    const valuePatterns = [
+      /(?:recebi|ganhei|receita)\s+(\d{1,4}(?:[,\.]\d{1,2})?)\s*(?:reais?|real|r\$|brl)?/gi,
+      /(\d{1,4}(?:[,\.]\d{1,2})?)\s*(?:reais?|real|r\$|brl)?\s+(?:do|da|de)/gi,
+      /(?:r\$|rs)\s*(\d{1,4}(?:[,\.]\d{1,2})?)/gi,
+    ];
+
+    for (const pattern of valuePatterns) {
+      const matches = [...text.matchAll(pattern)];
+      for (const match of matches) {
+        const amount = this.parseAmount(match[1]);
+        if (amount && amount > 0) {
+          extracted.amount = amount;
+          break;
+        }
+      }
+      if (extracted.amount) break;
+    }
+
+    // Extrair fonte
+    const sourcePatterns = [
+      /(?:do|da|de)\s+([a-záàâãçéêíóôõú\s]+?)(?:\s|$|,|\.|!|\?)/gi,
+      /\b(salario|salário|trabalho|emprego|freelance|extra|bonus|bônus)\b/gi,
+    ];
+
+    for (const pattern of sourcePatterns) {
+      const matches = [...text.matchAll(pattern)];
+      for (const match of matches) {
+        let source = match[1] ? match[1].trim() : match[0].trim();
+        if (source.length >= 3) {
+          extracted.source = this.capitalizeFirst(source);
+          break;
+        }
+      }
+      if (extracted.source) break;
+    }
+
+    extracted.description = `Receita: ${extracted.source || "Valor recebido"}`;
+
+    return extracted;
+  }
+
+  // ✅ EXTRAIR consulta de saldo
+  extractBalanceQuery(text) {
+    return {
+      type: "balance_query",
+      period: "current",
+    };
+  }
+
+  // ✅ EXTRAIR consulta de relatório
+  extractReportQuery(text) {
+    let period = "month"; // padrão
+
+    if (/\b(hoje|today)\b/gi.test(text)) period = "today";
+    else if (/\b(ontem|yesterday)\b/gi.test(text)) period = "yesterday";
+    else if (/\b(semana|week)\b/gi.test(text)) period = "week";
+    else if (/\b(mes|mês|month)\b/gi.test(text)) period = "month";
+    else if (/\b(ano|year)\b/gi.test(text)) period = "year";
+
+    return {
+      type: "report",
+      period: period,
+    };
+  }
+
+  // ✅ EXTRAIR dados de meta
+  extractGoalData(text) {
+    const extracted = {
+      category: "outros",
+      limit: null,
+      period: "month",
+    };
+
+    // Extrair valor da meta
+    const limitPatterns = [
+      /(?:meta|limite|orcamento|orçamento).*?(\d{1,4}(?:[,\.]\d{1,2})?)/gi,
+      /(\d{1,4}(?:[,\.]\d{1,2})?)\s*(?:reais?|real|r\$|brl)?.*?(?:meta|limite)/gi,
+    ];
+
+    for (const pattern of limitPatterns) {
+      const matches = [...text.matchAll(pattern)];
+      for (const match of matches) {
+        const limit = this.parseAmount(match[1]);
+        if (limit && limit > 0) {
+          extracted.limit = limit;
+          break;
+        }
+      }
+      if (extracted.limit) break;
+    }
+
+    // Extrair categoria da meta
+    const categoryPatterns = [
+      /(?:meta|limite).*?(?:de|do|da|para)\s+([a-záàâãçéêíóôõú]+)/gi,
+      /([a-záàâãçéêíóôõú]+).*?(?:meta|limite)/gi,
+    ];
+
+    for (const pattern of categoryPatterns) {
+      const matches = [...text.matchAll(pattern)];
+      for (const match of matches) {
+        const category = match[1].trim();
+        if (category.length >= 3) {
+          extracted.category = this.mapToStandardCategory(category);
+          break;
+        }
+      }
+      if (extracted.category !== "outros") break;
     }
 
     return extracted;
   }
 
-  // Extrair intenção genérica (fallback)
-  extractGenericIntent(text) {
-    const doc = nlp(text);
-    
-    // Tentar extrair números
-    const numbers = doc.numbers().out('array');
-    const amount = numbers.length > 0 ? parseFloat(numbers[0]) : null;
-    
-    // Tentar extrair datas
-    const dates = doc.dates().out('array');
-    const date = dates.length > 0 ? moment(dates[0]).toDate() : null;
-    
-    // Detectar palavras-chave
-    const keywords = {
-      income: ['recebi', 'ganhei', 'entrou', 'salário', 'freela', 'pagamento'],
-      expense: ['gastei', 'paguei', 'comprei', 'conta', 'boleto', 'uber', 'mercado'],
-      query: ['quanto', 'saldo', 'tenho', 'disponível', 'resumo', 'relatório']
+  // ✅ VERSÃO MELHORADA - Word boundary para TODAS as palavras
+
+  determineAdvancedCategory(establishment, text) {
+    const lowerText = (establishment + " " + text).toLowerCase();
+
+    // Mapeamento expandido
+    const categoryMap = {
+      // VESTUÁRIO (prioridade alta)
+      vestuário: [
+        "roupa",
+        "sapato",
+        "tênis",
+        "tenis",
+        "loja",
+        "shopping",
+        "renner",
+        "cea",
+        "riachuelo",
+        "zara",
+        "hm",
+        "magazine luiza",
+        "c&a",
+        "shein",
+        "nike",
+        "adidas",
+        "puma",
+        "hering",
+        "farm",
+      ],
+
+      // ALIMENTAÇÃO
+      alimentação: [
+        // Fast food
+        "mc",
+        "mcdonald",
+        "mcdonalds",
+        "mc donald",
+        "mc donalds",
+        "burger",
+        "burguer",
+        "burger king",
+        "bk",
+        "kfc",
+        "subway",
+        "pizza",
+        "pizzaria",
+
+        // Supermercados
+        "mercado",
+        "supermercado",
+        "super",
+        "carrefour",
+        "extra",
+        "pão de açúcar",
+
+        // Restaurantes
+        "restaurante",
+        "lanchonete",
+        "padaria",
+        "bar",
+        "cafeteria",
+        "ifood",
+        "uber eats",
+        "delivery",
+
+        // Outros
+        "açougue",
+        "feira",
+        "hortifruti",
+        "comida",
+        "almoço",
+        "jantar",
+        "lanche",
+      ],
+
+      // SAÚDE
+      saúde: [
+        "farmacia",
+        "farmácia",
+        "drogaria",
+        "drogasil",
+        "pacheco",
+        "raia",
+        "médico",
+        "medico",
+        "hospital",
+        "remédio",
+        "remedio",
+        "consulta",
+        "exame",
+        "dentista",
+        "oftalmologista",
+        "laboratório",
+        "clínica",
+      ],
+
+      // TRANSPORTE
+      transporte: [
+        "posto",
+        "gasolina",
+        "combustivel",
+        "combustível",
+        "alcool",
+        "álcool",
+        "shell",
+        "petrobras",
+        "ipiranga",
+        "ale",
+        "uber",
+        "taxi",
+        "99",
+        "ônibus",
+        "onibus",
+        "metrô",
+        "metro",
+        "estacionamento",
+        "pedágio",
+        "pedagio",
+        "oficina",
+        "mecânico",
+      ],
+
+      // CONTAS/UTILIDADES
+      contas: [
+        "luz",
+        "energia",
+        "cemig",
+        "light",
+        "conta de luz",
+        "agua",
+        "água",
+        "saneamento",
+        "sabesp",
+        "conta de agua",
+        "gas",
+        "gás",
+        "comgas",
+        "conta de gas",
+        "telefone",
+        "celular",
+        "tim",
+        "vivo",
+        "claro",
+        "oi",
+        "internet",
+        "netflix",
+        "spotify",
+        "amazon prime",
+        "streaming",
+        "iptu",
+        "condominio",
+        "condomínio",
+        "seguro",
+      ],
+
+      // LAZER
+      lazer: [
+        "cinema",
+        "teatro",
+        "show",
+        "festa",
+        "viagem",
+        "hotel",
+        "pousada",
+        "parque",
+        "clube",
+        "academia",
+        "esporte",
+      ],
+
+      // CASA
+      casa: [
+        "construção",
+        "tinta",
+        "ferramenta",
+        "móveis",
+        "decoração",
+        "jardim",
+        "limpeza",
+        "manutenção",
+      ],
+
+      // EDUCAÇÃO
+      educação: [
+        "escola",
+        "curso",
+        "livro",
+        "material",
+        "faculdade",
+        "universidade",
+        "aula",
+        "professor",
+      ],
     };
 
-    let detectedType = 'unknown';
-    for (const [type, words] of Object.entries(keywords)) {
-      if (words.some(word => text.includes(word))) {
-        detectedType = type;
-        break;
+    // ✅ VERIFICAÇÃO COM WORD BOUNDARY PARA TODAS AS PALAVRAS
+    for (const [category, keywords] of Object.entries(categoryMap)) {
+      for (const keyword of keywords) {
+        // ✅ Usar word boundary para TODAS as palavras
+        // Isso evita matches parciais como "gas" em "gastei"
+        const wordBoundaryRegex = new RegExp(
+          `\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+          "i"
+        );
+
+        if (wordBoundaryRegex.test(lowerText)) {
+          console.log(`📂 Categoria: ${category} (palavra-chave: ${keyword})`);
+          return category;
+        }
       }
     }
 
-    return {
-      intention: detectedType,
-      originalText: text,
-      confidence: 0.3,
-      extracted: {
-        type: detectedType,
-        amount,
-        date,
-        category: this.extractCategory(text),
-        description: this.extractDescription(text)
+    // ✅ FALLBACK: Para frases compostas que não funcionam com word boundary
+    const phrasePatterns = [
+      { phrase: "mc donald", category: "alimentação" },
+      { phrase: "mc donalds", category: "alimentação" },
+      { phrase: "burger king", category: "alimentação" },
+      { phrase: "uber eats", category: "alimentação" },
+      { phrase: "conta de luz", category: "contas" },
+      { phrase: "conta de agua", category: "contas" },
+      { phrase: "conta de gas", category: "contas" },
+      { phrase: "amazon prime", category: "contas" },
+    ];
+
+    for (const pattern of phrasePatterns) {
+      if (lowerText.includes(pattern.phrase)) {
+        console.log(
+          `📂 Categoria: ${pattern.category} (frase: ${pattern.phrase})`
+        );
+        return pattern.category;
       }
-    };
+    }
+
+    console.log('📂 Categoria não identificada, usando "outros"');
+    return "outros";
   }
 
-  // Extrair valor monetário
-  extractAmount(text) {
-    if (!text) return null;
-    
-    // Remover "R$", "reais", etc.
-    const cleanText = text.replace(/r?\$?\s*/gi, '').replace(/\s*(?:reais?|r\$)/gi, '');
-    
-    // Converter vírgula para ponto
-    const normalized = cleanText.replace(',', '.');
-    
-    const amount = parseFloat(normalized);
+  // ✅ MAPEAR categoria do texto para padrão
+  mapToStandardCategory(category) {
+    const mapping = {
+      mercado: "alimentação",
+      farmacia: "saúde",
+      posto: "transporte",
+      roupa: "vestuário",
+      casa: "casa",
+      conta: "contas",
+      luz: "contas",
+      agua: "contas",
+      telefone: "contas",
+    };
+
+    return mapping[category.toLowerCase()] || "outros";
+  }
+
+  // ✅ PARSE valor mais robusto
+  parseAmount(valueStr) {
+    if (!valueStr) return null;
+
+    const clean = valueStr.replace(/[^\d,\.]/g, "").replace(",", ".");
+
+    const amount = parseFloat(clean);
     return isNaN(amount) ? null : amount;
   }
 
-  // Extrair categoria
-  extractCategory(text) {
-    const categoryMap = {
-      // Transporte
-      'uber': 'transporte',
-      '99': 'transporte',
-      'taxi': 'transporte',
-      'ônibus': 'transporte',
-      'metrô': 'transporte',
-      'transporte': 'transporte',
-      
-      // Alimentação
-      'almoço': 'alimentação',
-      'jantar': 'alimentação',
-      'café': 'alimentação',
-      'lanche': 'alimentação',
-      'restaurante': 'alimentação',
-      'alimentação': 'alimentação',
-      
-      // Mercado
-      'mercado': 'mercado',
-      'supermercado': 'mercado',
-      'feira': 'mercado',
-      'compras': 'mercado',
-      
-      // Contas
-      'conta': 'contas',
-      'boleto': 'contas',
-      'luz': 'contas',
-      'água': 'contas',
-      'internet': 'contas',
-      'telefone': 'contas',
-      
-      // Lazer
-      'cinema': 'lazer',
-      'teatro': 'lazer',
-      'show': 'lazer',
-      'bar': 'lazer',
-      'balada': 'lazer',
-      'lazer': 'lazer',
-      
-      // Saúde
-      'farmácia': 'saúde',
-      'médico': 'saúde',
-      'dentista': 'saúde',
-      'exame': 'saúde',
-      'saúde': 'saúde',
-      
-      // Educação
-      'curso': 'educação',
-      'faculdade': 'educação',
-      'universidade': 'educação',
-      'livro': 'educação',
-      'educação': 'educação'
+  // ✅ CAPITALIZAR primeira letra
+  capitalizeFirst(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+  }
+
+  // ✅ GERAR descrição inteligente
+  generateDescription(extracted, originalText) {
+    const parts = [];
+
+    if (extracted.establishment) {
+      parts.push(extracted.establishment);
+    }
+
+    if (extracted.amount) {
+      parts.push(`R$ ${extracted.amount.toFixed(2)}`);
+    }
+
+    if (extracted.category !== "outros") {
+      parts.push(`(${extracted.category})`);
+    }
+
+    return parts.length > 0 ? parts.join(" - ") : originalText;
+  }
+
+  // ✅ CALCULAR confiança
+  calculateConfidence(intention, extracted) {
+    let confidence = 0.3; // base
+
+    if (intention !== "unknown") confidence += 0.3;
+    if (extracted.amount && extracted.amount > 0) confidence += 0.3;
+    if (extracted.establishment || extracted.source) confidence += 0.1;
+
+    return Math.min(0.9, confidence);
+  }
+
+  // ✅ EXTRAIR dados genéricos
+  extractGenericData(text) {
+    return {
+      type: "unknown",
+      amount: null,
+      date: new Date(),
+      category: "outros",
+      description: text,
     };
-
-    const lowerText = text.toLowerCase();
-    
-    for (const [keyword, category] of Object.entries(categoryMap)) {
-      if (lowerText.includes(keyword)) {
-        return category;
-      }
-    }
-
-    return 'outros';
   }
 
-  // Extrair descrição
-  extractDescription(text) {
-    // Remover números e palavras comuns
-    const cleanText = text
-      .replace(/r?\$?\s*[\d.,]+/gi, '')
-      .replace(/\s*(?:reais?|r\$)/gi, '')
-      .replace(/\b(?:gastei|paguei|recebi|ganhei|comprei|entrou)\b/gi, '')
-      .replace(/\b(?:de|com|no|na|em|para)\b/gi, '')
-      .trim();
-
-    return cleanText || 'Transação';
-  }
-
-  // Extrair data
-  extractDate(text) {
-    const doc = nlp(text);
-    const dates = doc.dates().out('array');
-    
-    if (dates.length > 0) {
-      return moment(dates[0]).toDate();
-    }
-
-    // Verificar palavras como "hoje", "ontem", etc.
-    const dateKeywords = {
-      'hoje': 0,
-      'ontem': -1,
-      'anteontem': -2,
-      'amanhã': 1
-    };
-
-    for (const [keyword, days] of Object.entries(dateKeywords)) {
-      if (text.toLowerCase().includes(keyword)) {
-        return moment().add(days, 'days').toDate();
-      }
-    }
-
-    return new Date();
-  }
-
-  // Extrair período
-  extractPeriod(text) {
-    const lowerText = text.toLowerCase();
-    
-    if (lowerText.includes('semana')) return 'week';
-    if (lowerText.includes('mês') || lowerText.includes('mes')) return 'month';
-    if (lowerText.includes('trimestre')) return 'quarter';
-    if (lowerText.includes('ano')) return 'year';
-    
-    return 'month'; // padrão
-  }
-
-  // Gerar resposta de ajuda
+  // ✅ GERAR mensagem de ajuda
   generateHelpMessage() {
-    return `🤖 **COMANDOS DISPONÍVEIS**\n\n` +
-           `💰 **Registrar Gastos:**\n` +
-           `• "Gastei 50 no Uber"\n` +
-           `• "Paguei 150 na conta de luz"\n` +
-           `• "Comprei 80 no mercado"\n\n` +
-           
-           `💵 **Registrar Receitas:**\n` +
-           `• "Recebi 2500 do salário"\n` +
-           `• "Ganhei 500 do freela"\n\n` +
-           
-           `📊 **Consultas:**\n` +
-           `• "Quanto tenho agora?"\n` +
-           `• "Resumo da semana"\n` +
-           `• "Relatório do mês"\n\n` +
-           
-           `🎯 **Metas:**\n` +
-           `• "Meta de mercado 600"\n` +
-           `• "Meta de transporte 200"\n\n` +
-           
-           `💰 **Cofrinhos:**\n` +
-           `• "Criar cofrinho viagem 2000"\n\n` +
-           
-           `📤 **Exportação:**\n` +
-           `• "Exporte este mês em PDF"\n` +
-           `• "Exporte agosto em CSV"\n\n` +
-           
-           `🔕 **Configurações:**\n` +
-           `• "Pausar notificações por 3 dias"\n\n` +
-           
-           `📷 **OCR:**\n` +
-           `• Envie uma foto de recibo para extração automática`;
+    return (
+      `🤖 **COMANDOS DISPONÍVEIS**\n\n` +
+      `💸 **DESPESAS:**\n` +
+      `• "Gastei 50 no mercado"\n` +
+      `• "Paguei 150 de conta de luz"\n` +
+      `• "Comprei 25 na farmácia"\n\n` +
+      `💵 **RECEITAS:**\n` +
+      `• "Recebi 2500 do salário"\n` +
+      `• "Ganhei 300 de freelance"\n\n` +
+      `📊 **CONSULTAS:**\n` +
+      `• "Saldo" ou "Quanto tenho?"\n` +
+      `• "Gastos da semana"\n` +
+      `• "Resumo do mês"\n\n` +
+      `🎯 **METAS:**\n` +
+      `• "Meta de mercado 600"\n` +
+      `• "Limite de transporte 200"\n\n` +
+      `📷 **Envie foto** do recibo para extração automática!`
+    );
   }
 }
 
-module.exports = NaturalLanguageProcessor; 
+module.exports = NaturalLanguageProcessor;

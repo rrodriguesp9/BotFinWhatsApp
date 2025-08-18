@@ -1,6 +1,6 @@
-const { db } = require('../config/database');
-const { v4: uuidv4 } = require('uuid');
-const moment = require('moment');
+const { db } = require("../config/database");
+const { v4: uuidv4 } = require("uuid");
+const moment = require("moment");
 
 class Goal {
   constructor(data) {
@@ -18,15 +18,15 @@ class Goal {
   static async create(goalData) {
     try {
       const goal = new Goal(goalData);
-      
-      await db.collection('goals').doc(goal.id).set({
+
+      await db.collection("goals").doc(goal.id).set({
         userId: goal.userId,
         category: goal.category,
         monthlyLimit: goal.monthlyLimit,
         alertThreshold: goal.alertThreshold,
         createdAt: goal.createdAt,
         isActive: goal.isActive,
-        notifications: goal.notifications
+        notifications: goal.notifications,
       });
 
       return goal;
@@ -38,15 +38,17 @@ class Goal {
   // Buscar metas do usuário
   static async findByUser(userId, activeOnly = true) {
     try {
-      let query = db.collection('goals').where('userId', '==', userId);
-      
+      let query = db.collection("goals").where("userId", "==", userId);
+
       if (activeOnly) {
-        query = query.where('isActive', '==', true);
+        query = query.where("isActive", "==", true);
       }
 
       const snapshot = await query.get();
-      
-      return snapshot.docs.map(doc => new Goal({ id: doc.id, ...doc.data() }));
+
+      return snapshot.docs.map(
+        (doc) => new Goal({ id: doc.id, ...doc.data() })
+      );
     } catch (error) {
       throw new Error(`Erro ao buscar metas: ${error.message}`);
     }
@@ -55,10 +57,11 @@ class Goal {
   // Buscar meta por categoria
   static async findByCategory(userId, category) {
     try {
-      const snapshot = await db.collection('goals')
-        .where('userId', '==', userId)
-        .where('category', '==', category)
-        .where('isActive', '==', true)
+      const snapshot = await db
+        .collection("goals")
+        .where("userId", "==", userId)
+        .where("category", "==", category)
+        .where("isActive", "==", true)
         .limit(1)
         .get();
 
@@ -76,19 +79,26 @@ class Goal {
   // Calcular progresso da meta
   async calculateProgress(month = null) {
     try {
-      const Transaction = require('./Transaction');
-      
-      const startDate = month ? moment(month).startOf('month').toDate() : moment().startOf('month').toDate();
-      const endDate = month ? moment(month).endOf('month').toDate() : moment().endOf('month').toDate();
+      const Transaction = require("./Transaction");
+
+      const startDate = month
+        ? moment(month).startOf("month").toDate()
+        : moment().startOf("month").toDate();
+      const endDate = month
+        ? moment(month).endOf("month").toDate()
+        : moment().endOf("month").toDate();
 
       const transactions = await Transaction.findByUser(this.userId, {
-        type: 'expense',
+        type: "expense",
         category: this.category,
         startDate,
-        endDate
+        endDate,
       });
 
-      const totalSpent = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+      const totalSpent = transactions.reduce(
+        (sum, transaction) => sum + transaction.amount,
+        0
+      );
       const progress = totalSpent / this.monthlyLimit;
       const remaining = this.monthlyLimit - totalSpent;
 
@@ -98,7 +108,7 @@ class Goal {
         remaining: Math.max(remaining, 0),
         percentage: Math.round(progress * 100),
         isOverLimit: totalSpent > this.monthlyLimit,
-        shouldAlert: progress >= this.alertThreshold
+        shouldAlert: progress >= this.alertThreshold,
       };
     } catch (error) {
       throw new Error(`Erro ao calcular progresso: ${error.message}`);
@@ -118,10 +128,15 @@ class Goal {
   // Atualizar meta
   async update(updateData) {
     try {
-      const allowedFields = ['monthlyLimit', 'alertThreshold', 'isActive', 'notifications'];
+      const allowedFields = [
+        "monthlyLimit",
+        "alertThreshold",
+        "isActive",
+        "notifications",
+      ];
       const updates = {};
 
-      allowedFields.forEach(field => {
+      allowedFields.forEach((field) => {
         if (updateData[field] !== undefined) {
           updates[field] = updateData[field];
         }
@@ -129,7 +144,7 @@ class Goal {
 
       updates.updatedAt = new Date();
 
-      await db.collection('goals').doc(this.id).update(updates);
+      await db.collection("goals").doc(this.id).update(updates);
 
       // Atualizar propriedades locais
       Object.assign(this, updates);
@@ -144,9 +159,9 @@ class Goal {
   async deactivate() {
     try {
       this.isActive = false;
-      await db.collection('goals').doc(this.id).update({
+      await db.collection("goals").doc(this.id).update({
         isActive: false,
-        updatedAt: new Date()
+        updatedAt: new Date(),
       });
       return true;
     } catch (error) {
@@ -157,27 +172,27 @@ class Goal {
   // Formatar para exibição
   async toDisplayFormat() {
     const progress = await this.calculateProgress();
-    
+
     return {
       id: this.id,
       category: this.category,
-      monthlyLimit: new Intl.NumberFormat('pt-BR', {
-        style: 'currency',
-        currency: 'BRL'
+      monthlyLimit: new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: "BRL",
       }).format(this.monthlyLimit),
-      totalSpent: new Intl.NumberFormat('pt-BR', {
-        style: 'currency',
-        currency: 'BRL'
+      totalSpent: new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: "BRL",
       }).format(progress.totalSpent),
-      remaining: new Intl.NumberFormat('pt-BR', {
-        style: 'currency',
-        currency: 'BRL'
+      remaining: new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: "BRL",
       }).format(progress.remaining),
       percentage: progress.percentage,
       isOverLimit: progress.isOverLimit,
       shouldAlert: progress.shouldAlert,
       isActive: this.isActive,
-      notifications: this.notifications
+      notifications: this.notifications,
     };
   }
 
@@ -185,21 +200,43 @@ class Goal {
   async generateAlertMessage() {
     try {
       const progress = await this.calculateProgress();
-      
+
       if (progress.isOverLimit) {
-        return `🚨 **ALERTA DE META EXCEDIDA!**\n\n` +
-               `Você ultrapassou a meta de **${this.category}** em ` +
-               `${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(progress.totalSpent - this.monthlyLimit)}.\n\n` +
-               `Meta: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(this.monthlyLimit)}\n` +
-               `Gasto: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(progress.totalSpent)}`;
+        return (
+          `🚨 **ALERTA DE META EXCEDIDA!**\n\n` +
+          `Você ultrapassou a meta de **${this.category}** em ` +
+          `${new Intl.NumberFormat("pt-BR", {
+            style: "currency",
+            currency: "BRL",
+          }).format(progress.totalSpent - this.monthlyLimit)}.\n\n` +
+          `Meta: ${new Intl.NumberFormat("pt-BR", {
+            style: "currency",
+            currency: "BRL",
+          }).format(this.monthlyLimit)}\n` +
+          `Gasto: ${new Intl.NumberFormat("pt-BR", {
+            style: "currency",
+            currency: "BRL",
+          }).format(progress.totalSpent)}`
+        );
       } else if (progress.shouldAlert) {
-        return `⚠️ **ALERTA DE META!**\n\n` +
-               `Você já gastou **${progress.percentage}%** (${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(progress.totalSpent)}) ` +
-               `da sua meta de **${this.category}**.\n\n` +
-               `Meta: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(this.monthlyLimit)}\n` +
-               `Restante: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(progress.remaining)}`;
+        return (
+          `⚠️ **ALERTA DE META!**\n\n` +
+          `Você já gastou **${progress.percentage}%** (${new Intl.NumberFormat(
+            "pt-BR",
+            { style: "currency", currency: "BRL" }
+          ).format(progress.totalSpent)}) ` +
+          `da sua meta de **${this.category}**.\n\n` +
+          `Meta: ${new Intl.NumberFormat("pt-BR", {
+            style: "currency",
+            currency: "BRL",
+          }).format(this.monthlyLimit)}\n` +
+          `Restante: ${new Intl.NumberFormat("pt-BR", {
+            style: "currency",
+            currency: "BRL",
+          }).format(progress.remaining)}`
+        );
       }
-      
+
       return null;
     } catch (error) {
       throw new Error(`Erro ao gerar mensagem de alerta: ${error.message}`);
@@ -211,23 +248,26 @@ class Goal {
     const errors = [];
 
     if (!goalData.userId) {
-      errors.push('ID do usuário é obrigatório');
+      errors.push("ID do usuário é obrigatório");
     }
 
     if (!goalData.category) {
-      errors.push('Categoria é obrigatória');
+      errors.push("Categoria é obrigatória");
     }
 
     if (!goalData.monthlyLimit || goalData.monthlyLimit <= 0) {
-      errors.push('Limite mensal deve ser maior que zero');
+      errors.push("Limite mensal deve ser maior que zero");
     }
 
-    if (goalData.alertThreshold && (goalData.alertThreshold < 0 || goalData.alertThreshold > 1)) {
-      errors.push('Limite de alerta deve estar entre 0 e 1');
+    if (
+      goalData.alertThreshold &&
+      (goalData.alertThreshold < 0 || goalData.alertThreshold > 1)
+    ) {
+      errors.push("Limite de alerta deve estar entre 0 e 1");
     }
 
     return errors;
   }
 }
 
-module.exports = Goal; 
+module.exports = Goal;
