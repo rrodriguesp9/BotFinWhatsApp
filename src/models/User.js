@@ -1,142 +1,107 @@
-const { db } = require('../config/database');
+const { query } = require('../config/database');
 const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
 
 class User {
-  constructor(data) {
-    this.id = data.id || uuidv4();
-    this.phoneNumber = data.phoneNumber;
-    this.name = data.name || '';
-    this.pinHash = data.pinHash || '';
-    this.createdAt = data.createdAt || new Date();
-    this.isActive = data.isActive !== false;
-    this.settings = data.settings || {
-      notifications: true,
-      silentMode: false,
-      language: 'pt-BR',
-      currency: 'BRL'
+  constructor(row) {
+    this.id = row.id;
+    this.phoneNumber = row.phone_number;
+    this.name = row.name || '';
+    this.pinHash = row.pin_hash || '';
+    this.isActive = row.is_active;
+    this.settings = {
+      notifications: row.notifications,
+      silentMode: {
+        enabled: row.silent_mode,
+        until: row.silent_until
+      },
+      language: row.language || 'pt-BR',
+      currency: row.currency || 'BRL'
     };
+    this.createdAt = row.created_at;
   }
 
   // Criar novo usuário
   static async create(phoneNumber, name = '', pin = '1234') {
-    try {
-      const pinHash = await bcrypt.hash(pin, 10);
-      
-      const userData = {
-        phoneNumber,
-        name,
-        pinHash,
-        createdAt: new Date(),
-        isActive: true,
-        settings: {
-          notifications: true,
-          silentMode: false,
-          language: 'pt-BR',
-          currency: 'BRL'
-        }
-      };
+    const pinHash = await bcrypt.hash(pin, 10);
 
-      const userRef = await db.collection('users').add(userData);
-      
-      // Criar saldo inicial
-      await db.collection('balances').doc(userRef.id).set({
-        currentBalance: 0,
-        updatedAt: new Date()
-      });
+    const { rows } = await query(
+      `INSERT INTO users (phone_number, name, pin_hash)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [phoneNumber, name, pinHash]
+    );
 
-      return new User({ id: userRef.id, ...userData });
-    } catch (error) {
-      throw new Error(`Erro ao criar usuário: ${error.message}`);
-    }
+    // Criar saldo inicial
+    await query(
+      `INSERT INTO balances (user_id, current_balance) VALUES ($1, 0)`,
+      [rows[0].id]
+    );
+
+    return new User(rows[0]);
   }
 
   // Buscar usuário por telefone
   static async findByPhone(phoneNumber) {
-    try {
-      const snapshot = await db.collection('users')
-        .where('phoneNumber', '==', phoneNumber)
-        .limit(1)
-        .get();
+    const { rows } = await query(
+      `SELECT * FROM users WHERE phone_number = $1 AND is_active = true LIMIT 1`,
+      [phoneNumber]
+    );
 
-      if (snapshot.empty) {
-        return null;
-      }
-
-      const doc = snapshot.docs[0];
-      return new User({ id: doc.id, ...doc.data() });
-    } catch (error) {
-      throw new Error(`Erro ao buscar usuário: ${error.message}`);
-    }
+    if (rows.length === 0) return null;
+    return new User(rows[0]);
   }
 
   // Verificar PIN
   async verifyPin(pin) {
-    try {
-      return await bcrypt.compare(pin, this.pinHash);
-    } catch (error) {
-      throw new Error(`Erro ao verificar PIN: ${error.message}`);
-    }
+    return bcrypt.compare(pin, this.pinHash);
   }
 
   // Atualizar PIN
   async updatePin(newPin) {
-    try {
-      this.pinHash = await bcrypt.hash(newPin, 10);
-      await db.collection('users').doc(this.id).update({
-        pinHash: this.pinHash,
-        updatedAt: new Date()
-      });
-      return true;
-    } catch (error) {
-      throw new Error(`Erro ao atualizar PIN: ${error.message}`);
-    }
+    this.pinHash = await bcrypt.hash(newPin, 10);
+    await query(
+      `UPDATE users SET pin_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [this.pinHash, this.id]
+    );
   }
 
   // Atualizar configurações
   async updateSettings(newSettings) {
-    try {
-      this.settings = { ...this.settings, ...newSettings };
-      await db.collection('users').doc(this.id).update({
-        settings: this.settings,
-        updatedAt: new Date()
-      });
-      return true;
-    } catch (error) {
-      throw new Error(`Erro ao atualizar configurações: ${error.message}`);
+    if (newSettings.silentMode !== undefined) {
+      this.settings.silentMode = newSettings.silentMode;
+      await query(
+        `UPDATE users SET silent_mode = $1, silent_until = $2, updated_at = NOW() WHERE id = $3`,
+        [newSettings.silentMode.enabled, newSettings.silentMode.until, this.id]
+      );
+    }
+    if (newSettings.notifications !== undefined) {
+      this.settings.notifications = newSettings.notifications;
+      await query(
+        `UPDATE users SET notifications = $1, updated_at = NOW() WHERE id = $2`,
+        [newSettings.notifications, this.id]
+      );
     }
   }
 
   // Ativar/desativar modo silencioso
   async toggleSilentMode(duration = null) {
-    try {
-      const silentMode = duration ? {
-        enabled: true,
-        until: new Date(Date.now() + duration * 24 * 60 * 60 * 1000) // dias para ms
-      } : {
-        enabled: false,
-        until: null
-      };
+    const silentMode = duration
+      ? { enabled: true, until: new Date(Date.now() + duration * 24 * 60 * 60 * 1000) }
+      : { enabled: false, until: null };
 
-      await this.updateSettings({ silentMode });
-      return true;
-    } catch (error) {
-      throw new Error(`Erro ao alterar modo silencioso: ${error.message}`);
-    }
+    await this.updateSettings({ silentMode });
   }
 
   // Verificar se está em modo silencioso
   isInSilentMode() {
     if (!this.settings.silentMode.enabled) return false;
-    
     if (this.settings.silentMode.until) {
-      return new Date() < this.settings.silentMode.until;
+      return new Date() < new Date(this.settings.silentMode.until);
     }
-    
     return false;
   }
 
-  // Obter dados públicos (sem informações sensíveis)
+  // Dados públicos (sem PIN)
   toPublicJSON() {
     return {
       id: this.id,
@@ -152,4 +117,4 @@ class User {
   }
 }
 
-module.exports = User; 
+module.exports = User;

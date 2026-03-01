@@ -38,6 +38,13 @@ class ReportService {
 
   // Gerar relatório PDF
   async generatePDFReport(userId, transactions, stats, goals, balance, period) {
+    // Pré-calcular progresso das metas (async) antes de gerar o PDF (sync)
+    const goalsData = [];
+    for (const goal of goals) {
+      const progress = await goal.calculateProgress();
+      goalsData.push({ category: goal.category, monthlyLimit: goal.monthlyLimit, progress });
+    }
+
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({
@@ -52,12 +59,12 @@ class ReportService {
         // Cabeçalho
         doc.fontSize(24)
            .font('Helvetica-Bold')
-           .text('📊 RELATÓRIO FINANCEIRO', { align: 'center' });
+           .text('RELATORIO FINANCEIRO', { align: 'center' });
 
         doc.moveDown();
         doc.fontSize(12)
            .font('Helvetica')
-           .text(`Período: ${this.getPeriodText(period)}`, { align: 'center' })
+           .text(`Periodo: ${this.getPeriodText(period)}`, { align: 'center' })
            .text(`Gerado em: ${moment().format('DD/MM/YYYY HH:mm')}`, { align: 'center' });
 
         doc.moveDown(2);
@@ -65,7 +72,7 @@ class ReportService {
         // Saldo atual
         doc.fontSize(16)
            .font('Helvetica-Bold')
-           .text('💳 SALDO ATUAL');
+           .text('SALDO ATUAL');
 
         doc.fontSize(12)
            .font('Helvetica')
@@ -76,29 +83,28 @@ class ReportService {
         // Resumo por categoria
         doc.fontSize(16)
            .font('Helvetica-Bold')
-           .text('📂 GASTOS POR CATEGORIA');
+           .text('GASTOS POR CATEGORIA');
 
         Object.entries(stats).forEach(([category, data]) => {
           if (data.total > 0) {
             doc.fontSize(10)
                .font('Helvetica')
-               .text(`${category}: R$ ${data.total.toFixed(2)} (${data.count} transações)`);
+               .text(`${category}: R$ ${data.total.toFixed(2)} (${data.count} transacoes)`);
           }
         });
 
         doc.moveDown(2);
 
         // Metas
-        if (goals.length > 0) {
+        if (goalsData.length > 0) {
           doc.fontSize(16)
              .font('Helvetica-Bold')
-             .text('🎯 METAS');
+             .text('METAS');
 
-          goals.forEach(async (goal) => {
-            const progress = await goal.calculateProgress();
+          goalsData.forEach(({ category, monthlyLimit, progress }) => {
             doc.fontSize(10)
                .font('Helvetica')
-               .text(`${goal.category}: ${progress.percentage}% (R$ ${progress.totalSpent.toFixed(2)} / R$ ${goal.monthlyLimit.toFixed(2)})`);
+               .text(`${category}: ${progress.percentage}% (R$ ${progress.totalSpent.toFixed(2)} / R$ ${monthlyLimit.toFixed(2)})`);
           });
 
           doc.moveDown(2);
@@ -107,7 +113,7 @@ class ReportService {
         // Transações recentes
         doc.fontSize(16)
            .font('Helvetica-Bold')
-           .text('📝 ÚLTIMAS TRANSAÇÕES');
+           .text('ULTIMAS TRANSACOES');
 
         transactions.slice(0, 20).forEach(transaction => {
           const formattedAmount = new Intl.NumberFormat('pt-BR', {
@@ -116,17 +122,18 @@ class ReportService {
           }).format(transaction.amount);
 
           const formattedDate = moment(transaction.date).format('DD/MM/YYYY');
+          const icon = transaction.type === 'income' ? '[+]' : '[-]';
 
           doc.fontSize(8)
              .font('Helvetica')
-             .text(`${formattedDate} - ${transaction.type === 'income' ? '💵' : '💸'} ${formattedAmount} - ${transaction.category} - ${transaction.description}`);
+             .text(`${formattedDate} - ${icon} ${formattedAmount} - ${transaction.category} - ${transaction.description}`);
         });
 
         // Rodapé
         doc.moveDown(2);
         doc.fontSize(10)
            .font('Helvetica-Oblique')
-           .text('Relatório gerado pelo Bot Financeiro WhatsApp', { align: 'center' });
+           .text('Relatorio gerado pelo Bot Financeiro WhatsApp', { align: 'center' });
 
         doc.end();
 

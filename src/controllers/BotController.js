@@ -53,47 +53,58 @@ class BotController {
   // Processar mensagem de texto
   async processTextMessage(user, message) {
     try {
-      // Processar linguagem natural
-      const intent = this.nlp.processMessage(message);
-      console.log('🧠 Intenção detectada:', intent);
-
-      // Executar ação baseada na intenção
-      switch (intent.intention) {
-        case 'income':
-        case 'expense':
-          return await this.handleTransaction(user, intent.extracted);
-          
-        case 'balance':
-          return await this.handleBalanceQuery(user);
-          
-        case 'report':
-          return await this.handleReportQuery(user, intent.extracted.period);
-          
-        case 'goal':
-          return await this.handleGoalCreation(user, intent.extracted);
-          
-        case 'savings':
-          return await this.handleSavingsGoal(user, intent.extracted);
-          
-        case 'split':
-          return await this.handleSplitExpense(user, intent.extracted);
-          
-        case 'export':
-          return await this.handleExport(user, intent.extracted);
-          
-        case 'help':
-          return await this.sendHelpMessage(user.phoneNumber);
-          
-        case 'silent':
-          return await this.handleSilentMode(user, intent.extracted.days);
-          
-        default:
-          return await this.handleUnknownCommand(user, message);
+      // Verificar se há sessão pendente de confirmação (ex: OCR)
+      const session = this.sessions.get(user.phoneNumber);
+      if (session && session.type === 'ocr_confirmation') {
+        return await this.handleOcrConfirmation(user, message, session);
       }
-      
+
+      return await this.processTextMessageInternal(user, message);
+
     } catch (error) {
       console.error('❌ Erro ao processar texto:', error);
       await this.sendErrorMessage(user.phoneNumber);
+    }
+  }
+
+  // Lógica interna de processamento NLP (separada para reuso no fallback de OCR)
+  async processTextMessageInternal(user, message) {
+    // Processar linguagem natural
+    const intent = this.nlp.processMessage(message);
+    console.log('🧠 Intenção detectada:', intent);
+
+    // Executar ação baseada na intenção
+    switch (intent.intention) {
+      case 'income':
+      case 'expense':
+        return await this.handleTransaction(user, intent.extracted);
+
+      case 'balance':
+        return await this.handleBalanceQuery(user);
+
+      case 'report':
+        return await this.handleReportQuery(user, intent.extracted.period);
+
+      case 'goal':
+        return await this.handleGoalCreation(user, intent.extracted);
+
+      case 'savings':
+        return await this.handleSavingsGoal(user, intent.extracted);
+
+      case 'split':
+        return await this.handleSplitExpense(user, intent.extracted);
+
+      case 'export':
+        return await this.handleExport(user, intent.extracted);
+
+      case 'help':
+        return await this.sendHelpMessage(user.phoneNumber);
+
+      case 'silent':
+        return await this.handleSilentMode(user, intent.extracted.days);
+
+      default:
+        return await this.handleUnknownCommand(user, message);
     }
   }
 
@@ -141,6 +152,32 @@ class BotController {
     } catch (error) {
       console.error('❌ Erro ao processar mídia:', error);
       await this.sendErrorMessage(user.phoneNumber);
+    }
+  }
+
+  // Lidar com confirmação de OCR (sim/não)
+  async handleOcrConfirmation(user, message, session) {
+    const response = message.toLowerCase().trim();
+    this.sessions.delete(user.phoneNumber);
+
+    if (response === 'sim' || response === 's') {
+      const data = session.data;
+      await this.handleTransaction(user, {
+        type: 'expense',
+        amount: data.amount,
+        category: data.category || 'outros',
+        description: data.description || 'Transação via OCR',
+        date: data.date || new Date(),
+        source: 'image'
+      });
+    } else if (response === 'não' || response === 'nao' || response === 'n') {
+      await this.sendMessage(user.phoneNumber,
+        '❌ **Transação cancelada.**\n\n' +
+        'Você pode digitar o valor manualmente.\n' +
+        'Exemplo: "gastei 50 no mercado"');
+    } else {
+      // Não era sim/não - reprocessar como mensagem normal
+      return await this.processTextMessageInternal(user, message);
     }
   }
 

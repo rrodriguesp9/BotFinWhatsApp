@@ -1,11 +1,8 @@
-const nlp = require('compromise');
 const moment = require('moment');
 
 class NaturalLanguageProcessor {
   constructor() {
-    // Configurar compromise para português
-    nlp.extend(require('compromise-numbers'));
-    nlp.extend(require('compromise-dates'));
+    // NLP baseado em regex otimizado para português brasileiro
   }
 
   // Processar mensagem e extrair intenção
@@ -13,15 +10,65 @@ class NaturalLanguageProcessor {
     const text = message.toLowerCase().trim();
     
     // Padrões de regex para diferentes tipos de comandos
+    // IMPORTANTE: a ordem define prioridade. Padrões mais específicos primeiro.
     const patterns = {
+      // Ajuda (primeiro para evitar conflitos com "como")
+      help: [
+        /(?:ajuda|help|comandos|como\s+(?:usar|funciona)|o\s+que\s+posso)/i
+      ],
+
+      // Modo silencioso
+      silent: [
+        /(?:pausar|silenciar|silêncio)\s+(?:notificações?|alertas?)\s+(?:por\s+)?(\d+)\s+(?:dias?|dia)/i,
+        /(?:modo\s+)?(?:silencioso|silêncio)\s+(?:por\s+)?(\d+)\s+(?:dias?|dia)/i
+      ],
+
+      // Exportação
+      export: [
+        /(?:exportar|exporte|baixar|download)\s+(?:relatório|dados|este|esse)?\s*(?:mês|semana)?\s*(?:em|para)\s+(pdf|csv|excel)/i,
+        /(?:exporte|baixar)\s+(?:este\s+)?(?:mês|semana)\s+(?:em|para)\s+(pdf|csv|excel)/i
+      ],
+
+      // Divisão de despesas
+      split: [
+        /(?:dividir|dividido)\s+([a-záàâãéèêíïóôõöúçñ]+)\s+(?:de\s+)?([\d.,]+)\s+(?:entre|por)\s+(\d+)/i,
+        /([\d.,]+)\s+(?:dividido|dividir)\s+(?:entre|por)\s+(\d+)/i
+      ],
+
+      // Metas (antes de expense para "meta de mercado 600" não casar com expense)
+      goal: [
+        /(?:meta|limite)\s+(?:de\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i,
+        /(?:definir|criar)\s+(?:meta|limite)\s+(?:de\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i
+      ],
+
+      // Cofrinhos (antes de expense para "cofrinho viagem 2000" não confundir)
+      savings: [
+        /(?:cofrinho|objetivo|guardar\s+para|poupar\s+para)\s+(?:para\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i,
+        /(?:criar\s+)?(?:cofrinho|objetivo)\s+([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i
+      ],
+
+      // Consultas de saldo
+      balance: [
+        /(?:quanto|saldo|tenho|disponível|dinheiro)\s+(?:tenho|agora|disponível)?/i,
+        /(?:meu\s+)?saldo/i,
+        /(?:quanto\s+)?(?:dinheiro|valor)\s+(?:tenho|disponível)/i
+      ],
+
+      // Relatórios
+      report: [
+        /(?:resumo|relatório|extrato)\s+(?:da\s+)?(?:semana|mês|mês\s+passado)/i,
+        /(?:gastos?|despesas?)\s+(?:da\s+)?(?:semana|mês)/i,
+        /(?:relatório|resumo)\s+(?:deste|do)\s+(?:mês|semana)/i
+      ],
+
       // Receitas
       income: [
         /(?:recebi|ganhei|entrou|depositei|salário|freela|pagamento)\s+(?:de\s+)?r?\$?\s*([\d.,]+)/i,
         /(?:recebi|ganhei|entrou|depositei)\s+([\d.,]+)\s+(?:reais?|r\$)/i,
         /(?:salário|freela|pagamento)\s+(?:de\s+)?([\d.,]+)/i
       ],
-      
-      // Despesas
+
+      // Despesas (por último entre os financeiros)
       expense: [
         /(?:gastei|paguei|comprei|compras?|conta|boleto)\s+(?:de\s+)?r?\$?\s*([\d.,]+)/i,
         /(?:gastei|paguei|comprei)\s+([\d.,]+)\s+(?:reais?|r\$)/i,
@@ -29,55 +76,6 @@ class NaturalLanguageProcessor {
         /(?:uber|99|taxi|ônibus|metrô|transporte)\s+([\d.,]+)/i,
         /(?:almoço|jantar|café|lanche|restaurante)\s+([\d.,]+)/i,
         /(?:mercado|supermercado|feira)\s+([\d.,]+)/i
-      ],
-      
-      // Consultas
-      balance: [
-        /(?:quanto|saldo|tenho|disponível|dinheiro)\s+(?:tenho|agora|disponível)?/i,
-        /(?:meu\s+)?saldo/i,
-        /(?:quanto\s+)?(?:dinheiro|valor)\s+(?:tenho|disponível)/i
-      ],
-      
-      // Relatórios
-      report: [
-        /(?:resumo|relatório|extrato)\s+(?:da\s+)?(?:semana|mês|mês\s+passado)/i,
-        /(?:gastos?|despesas?)\s+(?:da\s+)?(?:semana|mês)/i,
-        /(?:relatório|resumo)\s+(?:deste|do)\s+(?:mês|semana)/i
-      ],
-      
-      // Metas
-      goal: [
-        /(?:meta|limite)\s+(?:de\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i,
-        /(?:definir|criar)\s+(?:meta|limite)\s+(?:de\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i
-      ],
-      
-      // Cofrinhos
-      savings: [
-        /(?:cofrinho|objetivo|guardar|poupar)\s+(?:para\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i,
-        /(?:criar\s+)?(?:cofrinho|objetivo)\s+([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i
-      ],
-      
-      // Divisão de despesas
-      split: [
-        /(?:dividir|dividido)\s+([a-záàâãéèêíïóôõöúçñ]+)\s+(?:de\s+)?([\d.,]+)\s+(?:entre|por)\s+(\d+)/i,
-        /([\d.,]+)\s+(?:dividido|dividir)\s+(?:entre|por)\s+(\d+)/i
-      ],
-      
-      // Exportação
-      export: [
-        /(?:exportar|exporte|baixar|download)\s+(?:relatório|dados)\s+(?:em|para)\s+(pdf|csv|excel)/i,
-        /(?:exporte|baixar)\s+(?:este\s+)?(?:mês|semana)\s+(?:em|para)\s+(pdf|csv|excel)/i
-      ],
-      
-      // Ajuda
-      help: [
-        /(?:ajuda|help|comandos|como|o\s+que\s+posso)/i
-      ],
-      
-      // Modo silencioso
-      silent: [
-        /(?:pausar|silenciar|silêncio)\s+(?:notificações?|alertas?)\s+(?:por\s+)?(\d+)\s+(?:dias?|dia)/i,
-        /(?:modo\s+)?(?:silencioso|silêncio)\s+(?:por\s+)?(\d+)\s+(?:dias?|dia)/i
       ]
     };
 
@@ -192,21 +190,19 @@ class NaturalLanguageProcessor {
 
   // Extrair intenção genérica (fallback)
   extractGenericIntent(text) {
-    const doc = nlp(text);
-    
-    // Tentar extrair números
-    const numbers = doc.numbers().out('array');
-    const amount = numbers.length > 0 ? parseFloat(numbers[0]) : null;
-    
-    // Tentar extrair datas
-    const dates = doc.dates().out('array');
-    const date = dates.length > 0 ? moment(dates[0]).toDate() : null;
-    
+    // Extrair números do texto
+    const numberMatch = text.match(/(\d+[.,]?\d*)/);
+    const amount = numberMatch ? parseFloat(numberMatch[1].replace(',', '.')) : null;
+
+    // Extrair data do texto
+    const date = this.extractDate(text);
+
     // Detectar palavras-chave
     const keywords = {
-      income: ['recebi', 'ganhei', 'entrou', 'salário', 'freela', 'pagamento'],
+      income: ['recebi', 'ganhei', 'entrou', 'salário', 'salario', 'freela', 'pagamento'],
       expense: ['gastei', 'paguei', 'comprei', 'conta', 'boleto', 'uber', 'mercado'],
-      query: ['quanto', 'saldo', 'tenho', 'disponível', 'resumo', 'relatório']
+      balance: ['quanto', 'saldo', 'tenho', 'disponível', 'disponivel'],
+      report: ['resumo', 'relatório', 'relatorio', 'extrato']
     };
 
     let detectedType = 'unknown';
@@ -327,11 +323,14 @@ class NaturalLanguageProcessor {
 
   // Extrair data
   extractDate(text) {
-    const doc = nlp(text);
-    const dates = doc.dates().out('array');
-    
-    if (dates.length > 0) {
-      return moment(dates[0]).toDate();
+    // Tentar extrair data no formato DD/MM/YYYY ou DD/MM/YY
+    const datePattern = /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/;
+    const dateMatch = text.match(datePattern);
+    if (dateMatch) {
+      const parsed = moment(dateMatch[0], ['DD/MM/YYYY', 'DD/MM/YY', 'DD-MM-YYYY']);
+      if (parsed.isValid()) {
+        return parsed.toDate();
+      }
     }
 
     // Verificar palavras como "hoje", "ontem", etc.

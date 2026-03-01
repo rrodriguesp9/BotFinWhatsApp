@@ -3,10 +3,12 @@ const FormData = require('form-data');
 
 class WhatsAppService {
   constructor() {
-    this.apiUrl = process.env.WHATSAPP_API_URL;
+    const baseUrl = (process.env.WHATSAPP_API_BASE_URL || 'https://graph.facebook.com/').replace(/\/$/, '');
+    const version = process.env.WHATSAPP_API_VERSION || 'v23.0';
+    this.apiUrl = `${baseUrl}/${version}`;
     this.token = process.env.WHATSAPP_TOKEN;
     this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    
+
     this.client = axios.create({
       baseURL: this.apiUrl,
       headers: {
@@ -95,9 +97,14 @@ class WhatsAppService {
     }
   }
 
-  // Baixar mídia
-  async downloadMedia(mediaUrl) {
+  // Baixar mídia pelo media ID (Graph API exige 2 etapas: buscar URL, depois baixar)
+  async downloadMedia(mediaId) {
     try {
+      // Etapa 1: obter a URL real do arquivo a partir do media ID
+      const metaResponse = await this.client.get(`/${mediaId}`);
+      const mediaUrl = metaResponse.data.url;
+
+      // Etapa 2: baixar o arquivo usando a URL retornada
       const response = await axios.get(mediaUrl, {
         headers: {
           'Authorization': `Bearer ${this.token}`
@@ -106,7 +113,7 @@ class WhatsAppService {
       });
 
       return Buffer.from(response.data);
-      
+
     } catch (error) {
       console.error('❌ Erro ao baixar mídia:', error.response?.data || error.message);
       throw error;
