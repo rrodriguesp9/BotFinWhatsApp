@@ -257,6 +257,57 @@ app.get("/auth/google/callback", async (req, res) => {
   }
 });
 
+// Rota de diagnóstico - testa cada componente
+app.get("/api/debug", async (req, res) => {
+  const results = { timestamp: new Date().toISOString(), tests: {} };
+
+  // 1. Testar variáveis de ambiente
+  results.tests.env = {
+    WHATSAPP_TOKEN: !!process.env.WHATSAPP_TOKEN ? "SET" : "MISSING",
+    WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || "MISSING",
+    WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN || "MISSING (using fallback)",
+    DB_HOST: process.env.DB_HOST || "MISSING",
+    DB_NAME: process.env.DB_NAME || "MISSING",
+    NODE_ENV: process.env.NODE_ENV || "MISSING",
+  };
+
+  // 2. Testar database
+  try {
+    const { query } = require("./config/database");
+    const dbResult = await query("SELECT NOW() as time, current_database() as db");
+    results.tests.database = { status: "OK", time: dbResult.rows[0].time, db: dbResult.rows[0].db };
+  } catch (err) {
+    results.tests.database = { status: "FAIL", error: err.message };
+  }
+
+  // 3. Testar NLP
+  try {
+    const nlpResult = botController.nlp.processMessage("gastei 50 no mercado");
+    results.tests.nlp = { status: "OK", result: nlpResult };
+  } catch (err) {
+    results.tests.nlp = { status: "FAIL", error: err.message };
+  }
+
+  // 4. Testar WhatsApp API
+  try {
+    const isConnected = await whatsappService.testConnection();
+    results.tests.whatsapp = { status: isConnected ? "OK" : "FAIL" };
+  } catch (err) {
+    results.tests.whatsapp = { status: "FAIL", error: err.message };
+  }
+
+  // 5. Testar buscar/criar usuário (sem efeito colateral - apenas busca)
+  try {
+    const User = require("./models/User");
+    const testUser = await User.findByPhone("0000000000");
+    results.tests.userQuery = { status: "OK", userFound: !!testUser };
+  } catch (err) {
+    results.tests.userQuery = { status: "FAIL", error: err.message };
+  }
+
+  res.json(results);
+});
+
 // Middleware de tratamento de erros
 app.use((error, req, res, next) => {
   console.error("❌ Erro não tratado:", error);
@@ -322,7 +373,6 @@ process.on("uncaughtException", (error) => {
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("❌ Promise rejeitada não tratada:", reason);
-  process.exit(1);
 });
 
 // Iniciar servidor
