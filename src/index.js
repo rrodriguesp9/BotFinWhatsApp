@@ -1,10 +1,10 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const BotController = require('./controllers/BotController');
-const WhatsAppService = require('./services/WhatsAppService');
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const BotController = require("./controllers/BotController");
+const WhatsAppService = require("./services/WhatsAppService");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,18 +12,18 @@ const PORT = process.env.PORT || 3000;
 // Middlewares de segurança
 app.use(helmet());
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
   max: 100, // máximo 100 requests por IP
   message: {
-    error: 'Muitas requisições. Tente novamente em alguns minutos.'
-  }
+    error: "Muitas requisições. Tente novamente em alguns minutos.",
+  },
 });
-app.use('/api/', limiter);
+app.use("/api/", limiter);
 
 // Instanciar controlador do bot
 const botController = new BotController();
@@ -36,42 +36,94 @@ app.use((req, res, next) => {
 });
 
 // Rota de health check
-app.get('/health', (req, res) => {
+app.get("/health", (req, res) => {
   res.json({
-    status: 'OK',
+    status: "OK",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || "development",
   });
 });
 
 // Rota para receber webhooks do WhatsApp
-app.post('/webhook', async (req, res) => {
+app.post("/webhook", async (req, res) => {
   try {
     const { object, entry } = req.body;
 
-    if (object === 'whatsapp_business_account') {
+    if (object === "whatsapp_business_account") {
       for (const webhookEntry of entry) {
         const { changes } = webhookEntry;
-        
+
         for (const change of changes) {
           if (change.value && change.value.messages) {
             for (const message of change.value.messages) {
               const phoneNumber = message.from;
               const messageType = message.type;
-              
-              console.log(`📱 Nova mensagem recebida de ${phoneNumber}: ${messageType}`);
 
-              if (messageType === 'text') {
-                await botController.processMessage(phoneNumber, message.text.body);
-              } else if (messageType === 'image') {
+              console.log(
+                `📱 Nova mensagem recebida de ${phoneNumber}: ${messageType}`
+              );
+
+              if (messageType === "text") {
+                await botController.processMessage(
+                  phoneNumber,
+                  message.text.body
+                );
+              } else if (messageType === "image") {
                 const mediaUrl = message.image.id;
-                await botController.processMessage(phoneNumber, '', mediaUrl);
-              } else if (messageType === 'document') {
+                await botController.processMessage(phoneNumber, "", mediaUrl);
+              } else if (messageType === "document") {
                 const mediaUrl = message.document.id;
-                await botController.processMessage(phoneNumber, '', mediaUrl);
+                await botController.processMessage(phoneNumber, "", mediaUrl);
+              } else if (messageType === "audio") {
+                console.log("🎤 Detectado áudio, processando com Whisper...");
+
+                try {
+                  const mediaUrl = message.audio.id;
+                  const audioBuffer = await whatsappService.downloadMedia(
+                    mediaUrl
+                  );
+                  const result =
+                    await botController.whisperService.processWhatsAppAudio(
+                      audioBuffer
+                    );
+
+                  if (result.success) {
+                    const confirmationMessage =
+                      botController.whisperService.generateConfirmationMessage(
+                        result.extracted
+                      );
+                    await whatsappService.sendMessage(
+                      phoneNumber,
+                      confirmationMessage
+                    );
+
+                    botController.sessions.set(phoneNumber, {
+                      type: "audio_confirmation",
+                      data: result.extracted,
+                      transcription: result.transcription,
+                      timestamp: Date.now(),
+                    });
+                  } else {
+                    await whatsappService.sendMessage(
+                      phoneNumber,
+                      "❌ Não consegui processar o áudio. Tente falar mais claramente."
+                    );
+                  }
+                } catch (audioError) {
+                  console.error(
+                    "❌ Erro no processamento de áudio:",
+                    audioError
+                  );
+                  await whatsappService.sendMessage(
+                    phoneNumber,
+                    "❌ Erro no processamento. Tente novamente."
+                  );
+                }
               } else {
-                console.log(`⚠️ Tipo de mensagem não suportado: ${messageType}`);
+                console.log(
+                  `⚠️ Tipo de mensagem não suportado: ${messageType}`
+                );
               }
             }
           }
@@ -79,112 +131,149 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
-    res.status(200).json({ status: 'OK' });
+    res.status(200).json({ status: "OK" });
   } catch (error) {
-    console.error('❌ Erro no webhook:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    console.error("❌ Erro no webhook:", error);
+    res.status(500).json({ error: "Erro interno do servidor" });
   }
 });
 
 // Rota para verificar webhook (WhatsApp requer)
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
 
-  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || 'seu_verify_token';
+  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || "seu_verify_token";
 
   if (mode && token) {
-    if (mode === 'subscribe' && token === verifyToken) {
-      console.log('✅ Webhook verificado com sucesso');
+    if (mode === "subscribe" && token === verifyToken) {
+      console.log("✅ Webhook verificado com sucesso");
       res.status(200).send(challenge);
     } else {
-      res.status(403).json({ error: 'Token inválido' });
+      res.status(403).json({ error: "Token inválido" });
     }
   } else {
-    res.status(400).json({ error: 'Parâmetros inválidos' });
+    res.status(400).json({ error: "Parâmetros inválidos" });
   }
 });
 
 // Rota para enviar mensagem manual (para testes)
-app.post('/api/send-message', async (req, res) => {
+app.post("/api/send-message", async (req, res) => {
   try {
     const { phoneNumber, message } = req.body;
 
     if (!phoneNumber || !message) {
       return res.status(400).json({
-        error: 'phoneNumber e message são obrigatórios'
+        error: "phoneNumber e message são obrigatórios",
       });
     }
 
     await whatsappService.sendMessage(phoneNumber, message);
-    
+
     res.json({
       success: true,
-      message: 'Mensagem enviada com sucesso'
+      message: "Mensagem enviada com sucesso",
     });
   } catch (error) {
-    console.error('❌ Erro ao enviar mensagem:', error);
+    console.error("❌ Erro ao enviar mensagem:", error);
     res.status(500).json({
-      error: 'Erro ao enviar mensagem',
-      details: error.message
+      error: "Erro ao enviar mensagem",
+      details: error.message,
     });
   }
 });
 
 // Rota para testar conexão com WhatsApp
-app.get('/api/test-connection', async (req, res) => {
+app.get("/api/test-connection", async (req, res) => {
   try {
     const isConnected = await whatsappService.testConnection();
-    
+
     res.json({
       success: isConnected,
-      message: isConnected ? 'Conexão OK' : 'Erro na conexão'
+      message: isConnected ? "Conexão OK" : "Erro na conexão",
     });
   } catch (error) {
-    console.error('❌ Erro ao testar conexão:', error);
+    console.error("❌ Erro ao testar conexão:", error);
     res.status(500).json({
-      error: 'Erro ao testar conexão',
-      details: error.message
+      error: "Erro ao testar conexão",
+      details: error.message,
     });
   }
 });
 
 // Rota para obter estatísticas do bot
-app.get('/api/stats', async (req, res) => {
+app.get("/api/stats", async (req, res) => {
   try {
     // Implementar estatísticas do bot
     const stats = {
       uptime: process.uptime(),
       memory: process.memoryUsage(),
-      environment: process.env.NODE_ENV || 'development',
-      timestamp: new Date().toISOString()
+      environment: process.env.NODE_ENV || "development",
+      timestamp: new Date().toISOString(),
     };
 
     res.json(stats);
   } catch (error) {
-    console.error('❌ Erro ao obter estatísticas:', error);
+    console.error("❌ Erro ao obter estatísticas:", error);
     res.status(500).json({
-      error: 'Erro ao obter estatísticas',
-      details: error.message
+      error: "Erro ao obter estatísticas",
+      details: error.message,
     });
+  }
+});
+
+app.get("/auth/google/callback", async (req, res) => {
+  try {
+    console.log("🧪 DEBUG - Callback chamado!");
+    console.log("🧪 DEBUG - Query params:", req.query);
+
+    const { code, state: userId } = req.query;
+    console.log(`🧪 DEBUG - code=${code}, userId=${userId}`);
+
+    if (!code || !userId) {
+      console.log("❌ DEBUG - Parâmetros faltando");
+      return res.status(400).send("Erro na autorização - parâmetros faltando");
+    }
+
+    console.log("🧪 DEBUG - Chamando processAuthCode...");
+    const success = await botController.calendar.processAuthCode(code, userId);
+    console.log(`🧪 DEBUG - processAuthCode resultado: ${success}`);
+
+    if (success) {
+      console.log("✅ DEBUG - Sucesso, enviando página");
+      res.send(`
+        <h1>✅ Google Calendar conectado!</h1>
+        <p>Agora você receberá lembretes no seu calendário pessoal!</p>
+        <p>Pode fechar esta aba e voltar ao WhatsApp.</p>
+      `);
+    } else {
+      console.log("❌ DEBUG - Falha, enviando erro");
+      res.status(500).send("Erro ao processar autorização");
+    }
+  } catch (error) {
+    console.error("❌ DEBUG - Erro na rota callback:", error);
+    res.status(500).send("Erro interno do servidor");
   }
 });
 
 // Middleware de tratamento de erros
 app.use((error, req, res, next) => {
-  console.error('❌ Erro não tratado:', error);
+  console.error("❌ Erro não tratado:", error);
   res.status(500).json({
-    error: 'Erro interno do servidor',
-    message: process.env.NODE_ENV === 'development' ? error.message : 'Algo deu errado'
+    error: "Erro interno do servidor",
+    message:
+      process.env.NODE_ENV === "development"
+        ? error.message
+        : "Algo deu errado",
   });
 });
 
 // Rota 404
-app.use('*', (req, res) => {
+app.use("*", (req, res) => {
   res.status(404).json({
-    error: 'Rota não encontrada',
-    message: 'A rota solicitada não existe'
+    error: "Rota não encontrada",
+    message: "A rota solicitada não existe",
   });
 });
 
@@ -192,13 +281,13 @@ app.use('*', (req, res) => {
 async function startServer() {
   try {
     // Testar conexão com WhatsApp
-    console.log('🔍 Testando conexão com WhatsApp...');
+    console.log("🔍 Testando conexão com WhatsApp...");
     const isConnected = await whatsappService.testConnection();
-    
+
     if (!isConnected) {
-      console.warn('⚠️ Aviso: Não foi possível conectar com WhatsApp API');
+      console.warn("⚠️ Aviso: Não foi possível conectar com WhatsApp API");
     } else {
-      console.log('✅ Conexão com WhatsApp OK');
+      console.log("✅ Conexão com WhatsApp OK");
     }
 
     // Iniciar servidor
@@ -208,34 +297,33 @@ async function startServer() {
       console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
       console.log(`📊 Stats: http://localhost:${PORT}/api/stats`);
     });
-
   } catch (error) {
-    console.error('❌ Erro ao iniciar servidor:', error);
+    console.error("❌ Erro ao iniciar servidor:", error);
     process.exit(1);
   }
 }
 
 // Tratamento de sinais para graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Recebido SIGINT. Encerrando servidor...');
+process.on("SIGINT", () => {
+  console.log("\n🛑 Recebido SIGINT. Encerrando servidor...");
   process.exit(0);
 });
 
-process.on('SIGTERM', () => {
-  console.log('\n🛑 Recebido SIGTERM. Encerrando servidor...');
+process.on("SIGTERM", () => {
+  console.log("\n🛑 Recebido SIGTERM. Encerrando servidor...");
   process.exit(0);
 });
 
 // Tratamento de erros não capturados
-process.on('uncaughtException', (error) => {
-  console.error('❌ Erro não capturado:', error);
+process.on("uncaughtException", (error) => {
+  console.error("❌ Erro não capturado:", error);
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Promise rejeitada não tratada:', reason);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Promise rejeitada não tratada:", reason);
   process.exit(1);
 });
 
 // Iniciar servidor
-startServer(); 
+startServer();
