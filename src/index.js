@@ -256,7 +256,9 @@ app.get("/api/debug", async (req, res) => {
     DB_HOST: process.env.DB_HOST || "MISSING",
     DB_NAME: process.env.DB_NAME || "MISSING",
     NODE_ENV: process.env.NODE_ENV || "MISSING",
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY ? `SET (${process.env.OPENAI_API_KEY.substring(0, 7)}...)` : "MISSING",
+    GROQ_API_KEY: process.env.GROQ_API_KEY ? `SET (${process.env.GROQ_API_KEY.substring(0, 7)}...)` : "MISSING",
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY ? `SET (${process.env.GEMINI_API_KEY.substring(0, 7)}...)` : "MISSING",
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY ? `SET (${process.env.OPENAI_API_KEY.substring(0, 7)}...)` : "NOT SET (opcional, usando Groq/Gemini grátis)",
   };
 
   // 2. Testar database
@@ -293,34 +295,56 @@ app.get("/api/debug", async (req, res) => {
     results.tests.userQuery = { status: "FAIL", error: err.message };
   }
 
-  // 6. Testar serviços de mídia (Whisper, OpenAI Vision, OpenAI NLP)
+  // 6. Testar serviços de mídia
   results.tests.services = {
-    whisperService: botController.whisperService ? "ACTIVE" : "INACTIVE (sem OPENAI_API_KEY ou módulo falhou)",
-    openaiNLP: botController.openaiNLP ? "ACTIVE" : "INACTIVE",
-    openaiOCR: botController.openaiOCR ? "ACTIVE" : "INACTIVE",
-    googleVisionOCR: botController.googleVisionOCR ? "ACTIVE" : "INACTIVE (opcional)",
+    whisperService: botController.whisperService ? `ACTIVE (${botController.whisperService.provider || 'unknown'})` : "INACTIVE (configure GROQ_API_KEY)",
+    aiNLP: botController.aiNLP ? "ACTIVE" : "INACTIVE (configure GROQ_API_KEY)",
+    visionOCR: botController.visionOCR ? "ACTIVE" : "INACTIVE (configure GEMINI_API_KEY)",
   };
 
-  // 7. Testar conectividade com OpenAI (chamada real, rápida)
-  if (process.env.OPENAI_API_KEY) {
+  // 7. Testar conectividade com Groq (áudio + NLP — grátis)
+  if (process.env.GROQ_API_KEY) {
     try {
       const OpenAI = require('openai');
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      const testResponse = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+      const groq = new OpenAI({
+        apiKey: process.env.GROQ_API_KEY,
+        baseURL: 'https://api.groq.com/openai/v1',
+      });
+      const testResponse = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
         max_tokens: 5,
         messages: [{ role: 'user', content: 'Responda apenas: OK' }],
       });
-      results.tests.openaiAPI = {
+      results.tests.groqAPI = {
         status: "OK",
-        model: 'gpt-4o-mini',
+        model: 'llama-3.3-70b-versatile',
         response: testResponse.choices[0]?.message?.content?.trim(),
       };
     } catch (err) {
-      results.tests.openaiAPI = { status: "FAIL", error: err.message };
+      results.tests.groqAPI = { status: "FAIL", error: err.message };
     }
   } else {
-    results.tests.openaiAPI = { status: "SKIPPED", reason: "OPENAI_API_KEY não configurada" };
+    results.tests.groqAPI = { status: "SKIPPED", reason: "GROQ_API_KEY não configurada" };
+  }
+
+  // 8. Testar conectividade com Gemini (OCR — grátis)
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const testResult = await model.generateContent('Responda apenas: OK');
+      const testResponse = await testResult.response;
+      results.tests.geminiAPI = {
+        status: "OK",
+        model: 'gemini-2.0-flash',
+        response: testResponse.text().trim(),
+      };
+    } catch (err) {
+      results.tests.geminiAPI = { status: "FAIL", error: err.message };
+    }
+  } else {
+    results.tests.geminiAPI = { status: "SKIPPED", reason: "GEMINI_API_KEY não configurada" };
   }
 
   res.json(results);

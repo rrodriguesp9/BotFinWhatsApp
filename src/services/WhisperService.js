@@ -2,16 +2,29 @@ const OpenAI = require("openai");
 const fs = require("fs");
 const path = require("path");
 
-// NOTA: Não precisa de ffmpeg! O Whisper API aceita OGG/Opus diretamente,
-// que é o formato nativo de áudio do WhatsApp.
+// Whisper via Groq (grátis!) — aceita OGG/Opus diretamente do WhatsApp.
+// Fallback para OpenAI se GROQ_API_KEY não estiver configurada.
 
 class WhisperService {
   constructor() {
-    console.log(
-      "🔑 WhisperService: Chave OpenAI carregada:",
-      process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 8) + "..." : "NÃO CONFIGURADA"
-    );
-    this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    if (process.env.GROQ_API_KEY) {
+      // Groq: Whisper grátis, mesmo modelo, API compatível com OpenAI
+      this.client = new OpenAI({
+        apiKey: process.env.GROQ_API_KEY,
+        baseURL: 'https://api.groq.com/openai/v1',
+      });
+      this.whisperModel = 'whisper-large-v3';
+      this.provider = 'groq';
+      console.log('✅ WhisperService inicializado via Groq (grátis)');
+    } else if (process.env.OPENAI_API_KEY) {
+      // Fallback: OpenAI (pago)
+      this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      this.whisperModel = 'whisper-1';
+      this.provider = 'openai';
+      console.log('✅ WhisperService inicializado via OpenAI');
+    } else {
+      throw new Error('Nenhuma API key configurada (GROQ_API_KEY ou OPENAI_API_KEY)');
+    }
   }
 
   async processWhatsAppAudio(audioBuffer) {
@@ -26,9 +39,10 @@ class WhisperService {
       console.log(`🎤 Áudio salvo: ${tempPath} (${audioBuffer.length} bytes)`);
 
       // Enviar diretamente para Whisper (aceita OGG/Opus nativamente)
-      const transcription = await this.openai.audio.transcriptions.create({
+      console.log(`🎤 Enviando para ${this.provider} Whisper (${this.whisperModel})...`);
+      const transcription = await this.client.audio.transcriptions.create({
         file: fs.createReadStream(tempPath),
-        model: "whisper-1",
+        model: this.whisperModel,
         language: "pt",
         response_format: "text",
       });

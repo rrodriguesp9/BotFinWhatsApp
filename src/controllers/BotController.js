@@ -6,7 +6,7 @@ const OCRService = require('../services/OCRService');
 const WhatsAppService = require('../services/WhatsAppService');
 const ReportService = require('../services/ReportService');
 
-// Whisper (áudio) — opcional, depende de OPENAI_API_KEY
+// Whisper (áudio) — via Groq (grátis) ou OpenAI (pago)
 let WhisperService = null;
 try {
   WhisperService = require('../services/WhisperService');
@@ -14,28 +14,36 @@ try {
   console.log('⚠️ WhisperService não disponível:', e.message);
 }
 
-// Google Vision OCR — opcional, fallback quando Tesseract tem baixa confiança
-let GoogleVisionOCRService = null;
+// Gemini OCR — leitura de notas fiscais via Gemini Vision (grátis)
+let GeminiOCRService = null;
 try {
-  GoogleVisionOCRService = require('../services/GoogleVisionOCRService');
+  GeminiOCRService = require('../services/GeminiOCRService');
 } catch (e) {
-  console.log('⚠️ GoogleVisionOCRService não disponível:', e.message);
+  console.log('⚠️ GeminiOCRService não disponível:', e.message);
 }
 
-// OpenAI NLP — fallback inteligente quando regex não entende
-let OpenAINLPService = null;
-try {
-  OpenAINLPService = require('../services/OpenAINLPService');
-} catch (e) {
-  console.log('⚠️ OpenAINLPService não disponível:', e.message);
-}
-
-// OpenAI OCR — leitura de notas fiscais via GPT Vision
+// OpenAI OCR — fallback para leitura de notas fiscais via GPT Vision (pago)
 let OpenAIOCRService = null;
 try {
   OpenAIOCRService = require('../services/OpenAIOCRService');
 } catch (e) {
   console.log('⚠️ OpenAIOCRService não disponível:', e.message);
+}
+
+// Groq NLP — fallback inteligente quando regex não entende (grátis)
+let GroqNLPService = null;
+try {
+  GroqNLPService = require('../services/GroqNLPService');
+} catch (e) {
+  console.log('⚠️ GroqNLPService não disponível:', e.message);
+}
+
+// OpenAI NLP — fallback secundário (pago)
+let OpenAINLPService = null;
+try {
+  OpenAINLPService = require('../services/OpenAINLPService');
+} catch (e) {
+  console.log('⚠️ OpenAINLPService não disponível:', e.message);
 }
 
 class BotController {
@@ -45,37 +53,41 @@ class BotController {
     this.whatsapp = new WhatsAppService();
     this.report = new ReportService();
 
-    // Whisper (áudio) — só instancia se OPENAI_API_KEY existir
-    if (WhisperService && process.env.OPENAI_API_KEY) {
-      this.whisperService = new WhisperService();
-      console.log('✅ WhisperService (áudio) ativado');
+    // Whisper (áudio) — via Groq (grátis) ou OpenAI (pago)
+    if (WhisperService && (process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY)) {
+      try {
+        this.whisperService = new WhisperService();
+      } catch (e) {
+        this.whisperService = null;
+        console.log('⚠️ WhisperService falhou ao instanciar:', e.message);
+      }
     } else {
       this.whisperService = null;
-      console.log('⚠️ WhisperService desativado (OPENAI_API_KEY não configurada)');
+      console.log('⚠️ WhisperService desativado (configure GROQ_API_KEY ou OPENAI_API_KEY)');
     }
 
-    // Google Vision OCR — só instancia se credenciais existirem
-    if (GoogleVisionOCRService && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      this.googleVisionOCR = new GoogleVisionOCRService();
-      console.log('✅ GoogleVisionOCR (fallback) ativado');
+    // OCR para notas fiscais — Gemini (grátis, primário) ou OpenAI Vision (pago, fallback)
+    if (GeminiOCRService && process.env.GEMINI_API_KEY) {
+      this.visionOCR = new GeminiOCRService();
+      console.log('✅ Gemini Vision OCR (leitura de notas — grátis) ativado');
+    } else if (OpenAIOCRService && process.env.OPENAI_API_KEY) {
+      this.visionOCR = new OpenAIOCRService();
+      console.log('✅ OpenAI Vision OCR (leitura de notas — pago) ativado');
     } else {
-      this.googleVisionOCR = null;
+      this.visionOCR = null;
+      console.log('⚠️ Vision OCR desativado (configure GEMINI_API_KEY ou OPENAI_API_KEY)');
     }
 
-    // OpenAI NLP — fallback quando regex não entende
-    if (OpenAINLPService && process.env.OPENAI_API_KEY) {
-      this.openaiNLP = new OpenAINLPService();
-      console.log('✅ OpenAI NLP (fallback inteligente) ativado');
+    // NLP fallback — Groq (grátis, primário) ou OpenAI (pago, fallback)
+    if (GroqNLPService && process.env.GROQ_API_KEY) {
+      this.aiNLP = new GroqNLPService();
+      console.log('✅ Groq NLP (fallback inteligente — grátis) ativado');
+    } else if (OpenAINLPService && process.env.OPENAI_API_KEY) {
+      this.aiNLP = new OpenAINLPService();
+      console.log('✅ OpenAI NLP (fallback inteligente — pago) ativado');
     } else {
-      this.openaiNLP = null;
-    }
-
-    // OpenAI OCR — leitura de notas fiscais via GPT Vision (primário quando disponível)
-    if (OpenAIOCRService && process.env.OPENAI_API_KEY) {
-      this.openaiOCR = new OpenAIOCRService();
-      console.log('✅ OpenAI Vision OCR (leitura de notas) ativado');
-    } else {
-      this.openaiOCR = null;
+      this.aiNLP = null;
+      console.log('⚠️ NLP AI desativado (configure GROQ_API_KEY ou OPENAI_API_KEY)');
     }
 
     // Cache de sessões ativas
@@ -162,11 +174,11 @@ class BotController {
     let intent = this.nlp.processMessage(message);
     console.log('🧠 Regex NLP:', intent.intention, 'confidence:', intent.confidence);
 
-    // Se regex não entendeu ou confiança baixa, tentar OpenAI
-    if ((intent.intention === 'unknown' || intent.confidence < 0.4) && this.openaiNLP) {
-      console.log('🤖 Tentando OpenAI NLP fallback...');
-      const aiIntent = await this.openaiNLP.processMessage(message);
-      console.log('🤖 OpenAI NLP:', aiIntent.intention, 'confidence:', aiIntent.confidence);
+    // Se regex não entendeu ou confiança baixa, tentar IA (Groq/OpenAI)
+    if ((intent.intention === 'unknown' || intent.confidence < 0.4) && this.aiNLP) {
+      console.log('🤖 Tentando NLP AI fallback...');
+      const aiIntent = await this.aiNLP.processMessage(message);
+      console.log('🤖 NLP AI:', aiIntent.intention, 'confidence:', aiIntent.confidence);
       if (aiIntent.intention !== 'unknown' && aiIntent.confidence > intent.confidence) {
         intent = aiIntent;
       }
@@ -244,21 +256,21 @@ class BotController {
       let confirmationMessage = null;
 
       // Estratégia 1: OpenAI Vision (primário — mais preciso, como ChatGPT)
-      if (this.openaiOCR) {
+      if (this.visionOCR) {
         try {
-          console.log('🤖 Usando OpenAI Vision para ler nota fiscal...');
-          ocrResult = await this.openaiOCR.processImage(imageBuffer);
-          console.log('🤖 OpenAI Vision resultado:', ocrResult.success ? 'sucesso' : `falha: ${ocrResult.error}`);
+          console.log('🤖 Usando Vision AI para ler nota fiscal...');
+          ocrResult = await this.visionOCR.processImage(imageBuffer);
+          console.log('🤖 Vision AI resultado:', ocrResult.success ? 'sucesso' : `falha: ${ocrResult.error}`);
 
           if (ocrResult.success) {
-            confirmationMessage = this.openaiOCR.generateConfirmationMessage(ocrResult.extracted);
+            confirmationMessage = this.visionOCR.generateConfirmationMessage(ocrResult.extracted);
           }
         } catch (visionError) {
-          console.error('❌ OpenAI Vision exceção:', visionError.message);
+          console.error('❌ Vision AI exceção:', visionError.message);
           ocrResult = null;
         }
       } else {
-        console.log('⚠️ OpenAI Vision OCR não está ativo (verifique OPENAI_API_KEY)');
+        console.log('⚠️ Vision OCR não está ativo (configure GEMINI_API_KEY ou OPENAI_API_KEY)');
       }
 
       // Estratégia 2: Tesseract (fallback — gratuito, sem API)
