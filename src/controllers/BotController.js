@@ -711,6 +711,19 @@ class BotController {
     await cofrinho.adicionarValor(data.amount, 'Depósito via chat');
     const progresso = cofrinho.calcularProgresso();
 
+    // Abater do saldo principal (depósito no cofrinho = saída de dinheiro disponível)
+    await Transaction.create({
+      userId: user.id,
+      type: 'expense',
+      amount: data.amount,
+      category: 'cofrinho',
+      description: `Depósito no cofrinho "${cofrinho.nome}"`,
+      date: new Date(),
+      source: 'cofrinho'
+    });
+
+    const newBalance = await Transaction.getCurrentBalance(user.id);
+
     // Lembrete no Google Calendar (não bloqueia)
     if (progresso.atingido) {
       this._tryCalendarReminder(user.id, 'cofrinho_meta', { cofrinho });
@@ -724,7 +737,8 @@ class BotController {
       `💵 *Depositado:* ${Cofrinho.formatarMoeda(data.amount)}\n` +
       `💰 *Total guardado:* ${Cofrinho.formatarMoeda(cofrinho.valorAtual)}\n` +
       `📊 *Progresso:* ${progresso.percentual}%\n` +
-      (progresso.atingido ? `🎉 *Meta atingida!*` : `📉 *Faltam:* ${Cofrinho.formatarMoeda(progresso.faltam)}`));
+      (progresso.atingido ? `🎉 *Meta atingida!*` : `📉 *Faltam:* ${Cofrinho.formatarMoeda(progresso.faltam)}`) +
+      `\n\n💳 *Saldo disponível:* ${Cofrinho.formatarMoeda(newBalance)}`);
   }
 
   async handleCofrinhoWithdraw(user, data) {
@@ -760,12 +774,26 @@ class BotController {
     await cofrinho.retirarValor(data.amount, 'Retirada via chat');
     const progresso = cofrinho.calcularProgresso();
 
+    // Devolver ao saldo principal (retirada do cofrinho = entrada de dinheiro disponível)
+    await Transaction.create({
+      userId: user.id,
+      type: 'income',
+      amount: data.amount,
+      category: 'cofrinho',
+      description: `Retirada do cofrinho "${cofrinho.nome}"`,
+      date: new Date(),
+      source: 'cofrinho'
+    });
+
+    const newBalance = await Transaction.getCurrentBalance(user.id);
+
     await this.sendMessage(user.phoneNumber,
       `✅ *Retirada realizada!*\n\n` +
       `🏷️ *Cofrinho:* ${cofrinho.nome}\n` +
       `💸 *Retirado:* ${Cofrinho.formatarMoeda(data.amount)}\n` +
-      `💰 *Saldo restante:* ${Cofrinho.formatarMoeda(cofrinho.valorAtual)}\n` +
-      `📊 *Progresso:* ${progresso.percentual}%`);
+      `💰 *Saldo no cofrinho:* ${Cofrinho.formatarMoeda(cofrinho.valorAtual)}\n` +
+      `📊 *Progresso:* ${progresso.percentual}%\n\n` +
+      `💳 *Saldo disponível:* ${Cofrinho.formatarMoeda(newBalance)}`);
   }
 
   async handleCofrinhoList(user) {
