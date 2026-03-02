@@ -304,18 +304,22 @@ class NaturalLanguageProcessor {
     };
   }
 
-  // Extrair valor monetário (suporta K: 2k=2000, 1.5k=1500)
+  // Extrair valor monetário (suporta K: 2k=2000, 1.5k=1500, "15 mil"=15000)
   extractAmount(text) {
     if (!text) return null;
 
-    // Verificar se tem multiplicador K
-    const hasK = /[kK]\s*$/.test(text.trim());
+    const trimmed = text.trim();
 
-    // Remover "R$", "reais", "k", etc.
-    const cleanText = text
+    // Verificar multiplicadores: K ou "mil"
+    const hasK = /[kK]\s*$/.test(trimmed);
+    const hasMil = /\s*mil\s*$/i.test(trimmed);
+
+    // Remover "R$", "reais", "k", "mil", etc.
+    const cleanText = trimmed
       .replace(/r?\$?\s*/gi, '')
       .replace(/\s*(?:reais?|r\$)/gi, '')
-      .replace(/\s*[kK]\s*$/g, '');
+      .replace(/\s*[kK]\s*$/g, '')
+      .replace(/\s*mil\s*$/gi, '');
 
     // Converter vírgula para ponto
     const normalized = cleanText.replace(',', '.');
@@ -323,8 +327,8 @@ class NaturalLanguageProcessor {
     let amount = parseFloat(normalized);
     if (isNaN(amount)) return null;
 
-    // Aplicar multiplicador K
-    if (hasK) amount *= 1000;
+    // Aplicar multiplicador
+    if (hasK || hasMil) amount *= 1000;
 
     return amount;
   }

@@ -183,6 +183,10 @@ class BotController {
         return await this.handleAudioConfirmation(user, message, currentSession);
       }
 
+      if (currentSession && currentSession.type === 'cofrinho_create') {
+        return await this.handleCofrinhoCreateInput(user, message);
+      }
+
       if (currentSession && currentSession.type === 'pin_setup') {
         return await this.handlePinSetup(user, message, currentSession);
       }
@@ -612,12 +616,43 @@ class BotController {
   }
 
   async handleCofrinhoCreateHelp(user) {
+    this.sessions.set(user.phoneNumber, {
+      type: 'cofrinho_create',
+      timestamp: Date.now()
+    });
     await this.sendMessage(user.phoneNumber,
       `💡 *Como criar um cofrinho:*\n\n` +
       `Informe o nome e a meta:\n` +
-      `• "cofrinho viagem 2000"\n` +
-      `• "cofrinho emergência 5k"\n` +
-      `• "cofrinho carro 50000"`);
+      `• "viagem 2000"\n` +
+      `• "emergência 5k"\n` +
+      `• "reserva 15 mil"`);
+  }
+
+  // Capturar nome + valor do cofrinho a partir de texto livre (sessão após help)
+  async handleCofrinhoCreateInput(user, message) {
+    this.sessions.delete(user.phoneNumber);
+
+    const text = message.trim()
+      .replace(/,\s+(?=\d)/g, ' '); // normalizar vírgula
+
+    // Extrair: "<nome> <número>[k|mil]"
+    const match = text.match(/^(.+?)\s+([\d.,]+\s*(?:mil|k)?)\s*$/i);
+    if (!match) {
+      // Não parece "nome valor" — reprocessar como mensagem normal
+      return await this.processTextMessageInternal(user, message);
+    }
+
+    const name = match[1].replace(/,\s*$/, '').trim();
+    const target = this.nlp.extractAmount(match[2]);
+
+    if (!name || name.length < 2 || !target || target <= 0) {
+      await this.sendMessage(user.phoneNumber,
+        `❌ Não entendi. Informe o nome e o valor:\n` +
+        `Exemplo: "viagem 2000" ou "emergência 5k"`);
+      return;
+    }
+
+    return await this.handleCofrinhoCreate(user, { name, target });
   }
 
   async handleCofrinhoCreate(user, data) {
