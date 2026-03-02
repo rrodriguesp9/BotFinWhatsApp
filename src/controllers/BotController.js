@@ -417,11 +417,18 @@ class BotController {
       // Verificar metas
       const goal = await Goal.findByCategory(user.id, transactionData.category);
       let goalMessage = '';
-      
+
       if (goal) {
         const progress = await goal.calculateProgress();
         if (progress.shouldAlert) {
           goalMessage = '\n\n' + await goal.generateAlertMessage();
+
+          // Lembrete no Google Calendar (não bloqueia)
+          if (progress.percentage >= 100) {
+            this._tryCalendarReminder(user.id, 'goal_exceeded', { goal, totalGasto: progress.currentSpent });
+          } else if (progress.percentage >= 80) {
+            this._tryCalendarReminder(user.id, 'goal_80', { goal });
+          }
         }
       }
 
@@ -620,6 +627,13 @@ class BotController {
 
     await cofrinho.adicionarValor(data.amount, 'Depósito via chat');
     const progresso = cofrinho.calcularProgresso();
+
+    // Lembrete no Google Calendar (não bloqueia)
+    if (progresso.atingido) {
+      this._tryCalendarReminder(user.id, 'cofrinho_meta', { cofrinho });
+    } else if (parseFloat(progresso.percentual) >= 80) {
+      this._tryCalendarReminder(user.id, 'cofrinho_80', { cofrinho });
+    }
 
     await this.sendMessage(user.phoneNumber,
       `✅ *Depósito realizado!*\n\n` +
@@ -1062,6 +1076,36 @@ class BotController {
       `❌ **Erro interno**\n\n` +
       `Desculpe, ocorreu um erro. Tente novamente em alguns instantes.\n\n` +
       `Se o problema persistir, entre em contato com o suporte.`);
+  }
+
+  // Tentar criar lembrete no Google Calendar (fire-and-forget, não bloqueia fluxo)
+  async _tryCalendarReminder(userId, type, data) {
+    if (!this.calendar) return;
+    try {
+      const User = require('../models/User');
+      const user = await User.findById(userId);
+      if (!user || !user.googleTokens) return;
+
+      const authOk = await this.calendar.setUserAuth(userId);
+      if (!authOk) return;
+
+      switch (type) {
+        case 'goal_80':
+          await this.calendar.criarLembreteMeta80(userId, data.goal);
+          break;
+        case 'goal_exceeded':
+          await this.calendar.criarLembreteMetaEstourada(userId, data.goal, data.totalGasto);
+          break;
+        case 'cofrinho_80':
+          await this.calendar.criarLembreteCofrinho80(userId, data.cofrinho);
+          break;
+        case 'cofrinho_meta':
+          await this.calendar.criarLembreteCofrinhoMeta(userId, data.cofrinho);
+          break;
+      }
+    } catch (error) {
+      console.log(`⚠️ Calendar reminder falhou (${type}):`, error.message);
+    }
   }
 
   // Enviar mensagem

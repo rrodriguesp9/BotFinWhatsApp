@@ -1,8 +1,4 @@
-// =====================================================
-// 1. CRIAR: services/GoogleCalendarService.js
-// =====================================================
 const { google } = require("googleapis");
-require("dotenv").config();
 
 class GoogleCalendarService {
   constructor() {
@@ -27,6 +23,11 @@ class GoogleCalendarService {
     }
   }
 
+  // Alias para compatibilidade com BotController
+  generateAuthUrl(userId) {
+    return this.getAuthUrl(userId);
+  }
+
   getAuthUrl(userId) {
     const scopes = ["https://www.googleapis.com/auth/calendar"];
 
@@ -40,15 +41,10 @@ class GoogleCalendarService {
 
   async processAuthCode(code, userId) {
     try {
-      console.log(
-        `🧪 DEBUG - processAuthCode chamado: code=${code}, userId=${userId}`
-      );
       const { tokens } = await this.oAuth2Client.getToken(code);
-      console.log(`🧪 DEBUG - Tokens recebidos:`, tokens);
 
       const User = require("../models/User");
       await User.updateGoogleTokens(userId, tokens);
-      console.log(`🧪 DEBUG - Tokens salvos no Firebase para user ${userId}`);
 
       console.log(`✅ Usuário ${userId} autorizou Google Calendar`);
       return true;
@@ -83,9 +79,7 @@ class GoogleCalendarService {
     }
   }
 
-  // =====================================================
-  // 2. CRIAR LEMBRETES PARA METAS
-  // =====================================================
+  // Criar lembretes para metas de gastos
   async criarLembreteMeta80(userId, goal) {
     try {
       console.log(`📅 Criando lembrete 80% meta: ${goal.category}`);
@@ -187,9 +181,7 @@ class GoogleCalendarService {
     }
   }
 
-  // =====================================================
-  // 3. CRIAR LEMBRETES PARA COFRINHOS
-  // =====================================================
+  // Criar lembretes para cofrinhos
   async criarLembreteCofrinho80(userId, cofrinho) {
     try {
       console.log(`💰 Criando lembrete 80% cofrinho: ${cofrinho.nome}`);
@@ -205,7 +197,7 @@ class GoogleCalendarService {
           📊 Detalhes:
           • Cofrinho: ${cofrinho.nome}
           • Meta: R$ ${cofrinho.meta.toFixed(2)}
-          • Valor atual: R$ ${progresso.valorAtual.toFixed(2)}
+          • Valor atual: R$ ${cofrinho.valorAtual.toFixed(2)}
           • Restam apenas: R$ ${progresso.faltam.toFixed(2)}
           
           💪 Continue assim, você está quase lá!
@@ -297,9 +289,7 @@ class GoogleCalendarService {
     }
   }
 
-  // =====================================================
-  // 4. LEMBRETES PARA VENCIMENTOS
-  // =====================================================
+  // Lembretes para vencimentos de prazo
   async criarLembretePrazoCofrinho(userId, cofrinho, dataPrazo) {
     try {
       console.log(`⏰ Criando lembrete prazo: ${cofrinho.nome}`);
@@ -314,7 +304,7 @@ class GoogleCalendarService {
           📊 Detalhes:
           • Cofrinho: ${cofrinho.nome}
           • Meta: R$ ${cofrinho.meta.toFixed(2)}
-          • Valor atual: R$ ${progresso.valorAtual.toFixed(2)}
+          • Valor atual: R$ ${cofrinho.valorAtual.toFixed(2)}
           • Progresso: ${progresso.percentual}%
           
           ${
@@ -357,9 +347,7 @@ class GoogleCalendarService {
     }
   }
 
-  // =====================================================
-  // 5. LEMBRETES MENSAIS AUTOMÁTICOS
-  // =====================================================
+  // Lembretes mensais automáticos
   async criarLembreteResumoMensal(userId) {
     try {
       console.log(`📊 Criando lembrete resumo mensal para user: ${userId}`);
@@ -413,10 +401,6 @@ class GoogleCalendarService {
       throw error;
     }
   }
-
-  // =====================================================
-  // 6. FUNÇÕES AUXILIARES
-  // =====================================================
 
   // Deletar evento
   async deletarEvento(eventId) {
