@@ -719,7 +719,7 @@ class BotController {
       category: 'cofrinho',
       description: `Depósito no cofrinho "${cofrinho.nome}"`,
       date: new Date(),
-      source: 'cofrinho'
+      source: 'text'
     });
 
     const newBalance = await Transaction.getCurrentBalance(user.id);
@@ -782,7 +782,7 @@ class BotController {
       category: 'cofrinho',
       description: `Retirada do cofrinho "${cofrinho.nome}"`,
       date: new Date(),
-      source: 'cofrinho'
+      source: 'text'
     });
 
     const newBalance = await Transaction.getCurrentBalance(user.id);
