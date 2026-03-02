@@ -183,6 +183,10 @@ class BotController {
         return await this.handleAudioConfirmation(user, message, currentSession);
       }
 
+      if (currentSession && currentSession.type === 'pin_setup') {
+        return await this.handlePinSetup(user, message, currentSession);
+      }
+
       if (currentSession && currentSession.type === 'pin_verification') {
         return await this.handlePinVerification(user, message, currentSession);
       }
@@ -741,6 +745,20 @@ class BotController {
   // Lidar com exportação — pede PIN antes de enviar
   async handleExport(user, exportData) {
     try {
+      // Se usuário não tem PIN cadastrado, pedir para criar primeiro
+      if (!user.pinHash) {
+        this.sessions.set(user.phoneNumber, {
+          type: 'pin_setup',
+          action: 'export',
+          params: exportData,
+          timestamp: Date.now()
+        });
+        await this.sendMessage(user.phoneNumber,
+          `🔒 Você ainda não tem um PIN de segurança.\n\n` +
+          `Crie um *PIN de 4 dígitos* para proteger suas informações:`);
+        return;
+      }
+
       this.sessions.set(user.phoneNumber, {
         type: 'pin_verification',
         action: 'export',
@@ -752,6 +770,33 @@ class BotController {
     } catch (error) {
       console.error('❌ Erro ao solicitar PIN:', error);
       await this.sendErrorMessage(user.phoneNumber);
+    }
+  }
+
+  // Cadastro de PIN (usuário não tem PIN ainda)
+  async handlePinSetup(user, message, session) {
+    const pin = message.trim();
+
+    if (!/^\d{4}$/.test(pin)) {
+      await this.sendMessage(user.phoneNumber,
+        'O PIN deve ter exatamente *4 dígitos numéricos*.\nExemplo: 1234');
+      return; // mantém a sessão ativa para nova tentativa
+    }
+
+    // Salvar o PIN
+    await user.updatePin(pin);
+    this.sessions.delete(user.phoneNumber);
+
+    await this.sendMessage(user.phoneNumber,
+      `✅ *PIN criado com sucesso!*\n\n` +
+      `Agora executando sua operação...`);
+
+    // Executar a operação pendente
+    switch (session.action) {
+      case 'export':
+        return await this._executeExport(user, session.params);
+      default:
+        break;
     }
   }
 
