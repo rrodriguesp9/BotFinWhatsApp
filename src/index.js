@@ -87,7 +87,12 @@ app.post("/webhook", (req, res) => {
             continue;
           }
 
-          const phoneNumber = message.from;
+          const rawPhoneNumber = message.from;
+          const phoneNumber = whatsappService.validatePhoneNumber(rawPhoneNumber);
+          if (!phoneNumber) {
+            console.log(`⚠️ Número inválido ignorado: ${rawPhoneNumber}`);
+            continue;
+          }
           const messageType = message.type;
 
           console.log(
@@ -212,34 +217,28 @@ app.get("/api/stats", async (req, res) => {
 
 app.get("/auth/google/callback", async (req, res) => {
   try {
-    console.log("🧪 DEBUG - Callback chamado!");
-    console.log("🧪 DEBUG - Query params:", req.query);
+    if (!botController.calendar) {
+      return res.status(503).send("Google Calendar não configurado neste servidor.");
+    }
 
     const { code, state: userId } = req.query;
-    console.log(`🧪 DEBUG - code=${code}, userId=${userId}`);
 
     if (!code || !userId) {
-      console.log("❌ DEBUG - Parâmetros faltando");
       return res.status(400).send("Erro na autorização - parâmetros faltando");
     }
 
-    console.log("🧪 DEBUG - Chamando processAuthCode...");
     const success = await botController.calendar.processAuthCode(code, userId);
-    console.log(`🧪 DEBUG - processAuthCode resultado: ${success}`);
-
     if (success) {
-      console.log("✅ DEBUG - Sucesso, enviando página");
       res.send(`
         <h1>✅ Google Calendar conectado!</h1>
         <p>Agora você receberá lembretes no seu calendário pessoal!</p>
         <p>Pode fechar esta aba e voltar ao WhatsApp.</p>
       `);
     } else {
-      console.log("❌ DEBUG - Falha, enviando erro");
       res.status(500).send("Erro ao processar autorização");
     }
   } catch (error) {
-    console.error("❌ DEBUG - Erro na rota callback:", error);
+    console.error("❌ Erro na rota callback:", error);
     res.status(500).send("Erro interno do servidor");
   }
 });

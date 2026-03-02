@@ -88,6 +88,55 @@ async function migrate() {
     `);
     console.log('✅ Índice de goals criado');
 
+    // Tabela de cofrinhos (poupança)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cofrinhos (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        nome VARCHAR(100) NOT NULL,
+        meta NUMERIC(12,2) NOT NULL CHECK (meta > 0),
+        valor_atual NUMERIC(12,2) DEFAULT 0 CHECK (valor_atual >= 0),
+        prazo TIMESTAMPTZ,
+        categoria VARCHAR(50) DEFAULT 'economia',
+        descricao TEXT DEFAULT '',
+        ativo BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, nome)
+      );
+    `);
+    console.log('✅ Tabela cofrinhos criada');
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_cofrinhos_user ON cofrinhos(user_id);
+    `);
+
+    // Tabela de movimentos do cofrinho
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS movimentos_cofrinho (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        cofrinho_id UUID NOT NULL REFERENCES cofrinhos(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('deposito', 'retirada')),
+        valor NUMERIC(12,2) NOT NULL CHECK (valor > 0),
+        descricao TEXT DEFAULT '',
+        valor_anterior NUMERIC(12,2) NOT NULL,
+        valor_atual NUMERIC(12,2) NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    console.log('✅ Tabela movimentos_cofrinho criada');
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_mov_cofrinho ON movimentos_cofrinho(cofrinho_id);
+    `);
+
+    // Coluna google_tokens na tabela users (para Google Calendar)
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS google_tokens JSONB DEFAULT NULL;
+    `);
+    console.log('✅ Coluna google_tokens adicionada à tabela users');
+
     await client.query('COMMIT');
     console.log('\n✅ Migração concluída com sucesso!');
 

@@ -1,6 +1,17 @@
 const Tesseract = require("tesseract.js");
-const { createCanvas, loadImage } = require("canvas");
 const moment = require("moment");
+
+// Canvas é opcional — pode falhar no Render (dependência nativa)
+let createCanvas, loadImage;
+try {
+  const canvasModule = require("canvas");
+  createCanvas = canvasModule.createCanvas;
+  loadImage = canvasModule.loadImage;
+} catch (e) {
+  console.warn("⚠️ Canvas não disponível — Tesseract usará buffer direto:", e.message);
+  createCanvas = null;
+  loadImage = null;
+}
 
 class OCRService {
   constructor() {
@@ -21,6 +32,30 @@ class OCRService {
   async processImage(imageBuffer) {
     try {
       console.log("🔍 Iniciando processamento OCR universal...");
+
+      // Se canvas não disponível, usar Tesseract direto no buffer
+      if (!loadImage || !createCanvas) {
+        console.log("📷 Canvas indisponível — processando buffer direto com Tesseract...");
+        const result = await Tesseract.recognize(imageBuffer, this.config.lang, {
+          logger: (m) => {},
+          tessedit_pageseg_mode: 6,
+          preserve_interword_spaces: 1,
+          user_defined_dpi: 300,
+        });
+
+        if (!result || !result.data || !result.data.text) {
+          return { success: false, error: "Tesseract não retornou texto" };
+        }
+
+        const extractedData = this.extractFinancialDataWithValidation(result.data.text);
+        return {
+          success: true,
+          text: result.data.text,
+          extracted: extractedData,
+          confidence: result.data.confidence,
+          source: "tesseract_raw"
+        };
+      }
 
       // Carregar imagem
       const image = await loadImage(imageBuffer);

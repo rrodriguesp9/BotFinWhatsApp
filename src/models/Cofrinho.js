@@ -1,742 +1,264 @@
-// ✅ ARQUIVO MELHORADO: src/models/Cofrinho.js
-
-const { db } = require("../config/database");
-const { v4: uuidv4 } = require("uuid");
-const moment = require("moment");
+const { query, pool } = require('../config/database');
+const moment = require('moment');
 
 class Cofrinho {
-  constructor(data) {
-    this.id = data.id || uuidv4();
-    this.userId = data.userId;
-    this.nome = data.nome;
-    this.meta = data.meta;
-    this.valorAtual = data.valorAtual || 0;
-    this.prazo = data.prazo || null;
-    this.categoria = data.categoria || "economia";
-    this.descricao = data.descricao || "";
-    this.ativo = data.ativo !== false;
-    this.criadoEm = data.criadoEm || new Date();
-    this.atualizadoEm = data.atualizadoEm || new Date();
+  constructor(row) {
+    this.id = row.id;
+    this.userId = row.user_id;
+    this.nome = row.nome;
+    this.meta = parseFloat(row.meta);
+    this.valorAtual = parseFloat(row.valor_atual);
+    this.prazo = row.prazo;
+    this.categoria = row.categoria || 'economia';
+    this.descricao = row.descricao || '';
+    this.ativo = row.ativo;
+    this.criadoEm = row.created_at;
+    this.atualizadoEm = row.updated_at;
   }
 
-  // ✅ CRIAR novo cofrinho com normalização de nome
+  // --- Métodos estáticos ---
+
   static async create(data) {
-    try {
-      // ✅ NORMALIZAR nome
-      const nomeNormalizado = this.normalizeNome(data.nome);
+    const errors = Cofrinho.validate(data);
+    if (errors.length > 0) throw new Error(errors.join(', '));
 
-      const cofrinho = new Cofrinho({
-        ...data,
-        nome: nomeNormalizado,
-      });
+    const nome = Cofrinho.normalizeNome(data.nome || data.name);
 
-      await db.collection("cofrinhos").doc(cofrinho.id).set({
-        userId: cofrinho.userId,
-        nome: cofrinho.nome,
-        meta: cofrinho.meta,
-        valorAtual: 0, // ✅ SEMPRE iniciar com zero
-        prazo: cofrinho.prazo,
-        categoria: cofrinho.categoria,
-        descricao: cofrinho.descricao,
-        ativo: true,
-        criadoEm: cofrinho.criadoEm,
-        atualizadoEm: cofrinho.atualizadoEm,
-      });
+    // Verificar duplicata
+    const existing = await Cofrinho.findByName(data.userId, nome);
+    if (existing) throw new Error(`Já existe um cofrinho chamado "${nome}"`);
 
-      console.log(`✅ Cofrinho criado: ${cofrinho.id}`);
-      return cofrinho;
-    } catch (error) {
-      console.error("❌ Erro ao criar cofrinho:", error);
-      throw new Error(`Erro ao criar cofrinho: ${error.message}`);
-    }
-  }
-
-  // ✅ BUSCAR cofrinhos do usuário com paginação
-  static async findByUser(userId, options = {}) {
-    try {
-      const { activeOnly = true, limit = 50, offset = 0 } = options;
-
-      let query = db.collection("cofrinhos").where("userId", "==", userId);
-
-      if (activeOnly) {
-        query = query.where("ativo", "==", true);
-      }
-
-      query = query.orderBy("criadoEm", "desc");
-
-      if (limit) {
-        query = query.limit(limit);
-      }
-
-      const snapshot = await query.get();
-
-      return snapshot.docs.map(
-        (doc) => new Cofrinho({ id: doc.id, ...doc.data() })
-      );
-    } catch (error) {
-      console.error("❌ Erro ao buscar cofrinhos:", error);
-      return [];
-    }
-  }
-
-  // ✅ BUSCAR cofrinho por nome com normalização
-  static async findByName(userId, nome) {
-    try {
-      const nomeNormalizado = this.normalizeNome(nome);
-
-      const snapshot = await db
-        .collection("cofrinhos")
-        .where("userId", "==", userId)
-        .where("nome", "==", nomeNormalizado)
-        .where("ativo", "==", true)
-        .limit(1)
-        .get();
-
-      if (snapshot.empty) return null;
-
-      const doc = snapshot.docs[0];
-      return new Cofrinho({ id: doc.id, ...doc.data() });
-    } catch (error) {
-      console.error("❌ Erro ao buscar cofrinho:", error);
-      return null;
-    }
-  }
-
-  // ✅ BUSCAR cofrinho por ID
-  static async findById(cofrinhoId) {
-    try {
-      const doc = await db.collection("cofrinhos").doc(cofrinhoId).get();
-
-      if (!doc.exists) return null;
-
-      return new Cofrinho({ id: doc.id, ...doc.data() });
-    } catch (error) {
-      console.error("❌ Erro ao buscar cofrinho por ID:", error);
-      return null;
-    }
-  }
-
-  // ✅ ADICIONAR dinheiro ao cofrinho com transação atômica
-  async adicionarValor(valor, descricao = "") {
-    try {
-      // ✅ USAR TRANSAÇÃO ATÔMICA para evitar problemas de concorrência
-      await db.runTransaction(async (transaction) => {
-        const cofrinhoRef = db.collection("cofrinhos").doc(this.id);
-        const doc = await transaction.get(cofrinhoRef);
-
-        if (!doc.exists) {
-          throw new Error("Cofrinho não encontrado");
-        }
-
-        const dadosAtuais = doc.data();
-        const novoValor = dadosAtuais.valorAtual + valor;
-
-        transaction.update(cofrinhoRef, {
-          valorAtual: novoValor,
-          atualizadoEm: new Date(),
-        });
-
-        // Atualizar valor local
-        this.valorAtual = novoValor;
-        this.atualizadoEm = new Date();
-      });
-
-      // Registrar movimento após transação bem-sucedida
-      await this.registrarMovimento("deposito", valor, descricao);
-
-      console.log(`💰 Valor adicionado ao cofrinho ${this.nome}: +R$ ${valor}`);
-      return true;
-    } catch (error) {
-      console.error("❌ Erro ao adicionar valor:", error);
-      return false;
-    }
-  }
-
-  // ✅ RETIRAR dinheiro do cofrinho com transação atômica
-  async retirarValor(valor, descricao = "") {
-    try {
-      // ✅ USAR TRANSAÇÃO ATÔMICA
-      await db.runTransaction(async (transaction) => {
-        const cofrinhoRef = db.collection("cofrinhos").doc(this.id);
-        const doc = await transaction.get(cofrinhoRef);
-
-        if (!doc.exists) {
-          throw new Error("Cofrinho não encontrado");
-        }
-
-        const dadosAtuais = doc.data();
-
-        if (valor > dadosAtuais.valorAtual) {
-          throw new Error("Valor insuficiente no cofrinho");
-        }
-
-        const novoValor = dadosAtuais.valorAtual - valor;
-
-        transaction.update(cofrinhoRef, {
-          valorAtual: novoValor,
-          atualizadoEm: new Date(),
-        });
-
-        // Atualizar valor local
-        this.valorAtual = novoValor;
-        this.atualizadoEm = new Date();
-      });
-
-      // Registrar movimento após transação bem-sucedida
-      await this.registrarMovimento("retirada", valor, descricao);
-
-      console.log(`💸 Valor retirado do cofrinho ${this.nome}: -R$ ${valor}`);
-      return true;
-    } catch (error) {
-      console.error("❌ Erro ao retirar valor:", error);
-      throw new Error(`Erro ao retirar valor: ${error.message}`);
-    }
-  }
-
-  // ✅ REGISTRAR movimento do cofrinho
-  async registrarMovimento(tipo, valor, descricao) {
-    try {
-      await db.collection("movimentos_cofrinho").add({
-        cofrinhoId: this.id,
-        userId: this.userId,
-        tipo: tipo, // 'deposito' ou 'retirada'
-        valor: valor,
-        descricao: descricao,
-        valorAnterior:
-          tipo === "deposito"
-            ? this.valorAtual - valor
-            : this.valorAtual + valor,
-        valorAtual: this.valorAtual,
-        data: new Date(),
-      });
-    } catch (error) {
-      console.error("❌ Erro ao registrar movimento:", error);
-    }
-  }
-
-  // ✅ CALCULAR progresso
-  calcularProgresso() {
-    const percentual = Math.min((this.valorAtual / this.meta) * 100, 100);
-    const faltam = Math.max(this.meta - this.valorAtual, 0);
-    const atingido = this.valorAtual >= this.meta;
-
-    return {
-      percentual: percentual.toFixed(1),
-      valorAtual: this.valorAtual,
-      meta: this.meta,
-      faltam: faltam,
-      atingido: atingido,
-    };
-  }
-
-  // ✅ VERIFICAR se prazo está próximo
-  verificarPrazo() {
-    if (!this.prazo) return null;
-
-    const agora = new Date();
-    const prazoDate = new Date(this.prazo);
-    const diasRestantes = Math.ceil(
-      (prazoDate - agora) / (1000 * 60 * 60 * 24)
+    const { rows } = await query(
+      `INSERT INTO cofrinhos (user_id, nome, meta, prazo, categoria, descricao)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [data.userId, nome, data.meta || data.target, data.prazo || null,
+       data.categoria || 'economia', data.descricao || '']
     );
+    return new Cofrinho(rows[0]);
+  }
 
+  static async findByUser(userId) {
+    const { rows } = await query(
+      'SELECT * FROM cofrinhos WHERE user_id = $1 AND ativo = true ORDER BY created_at DESC',
+      [userId]
+    );
+    return rows.map(r => new Cofrinho(r));
+  }
+
+  static async findByName(userId, nome) {
+    const normalized = Cofrinho.normalizeNome(nome);
+    const { rows } = await query(
+      'SELECT * FROM cofrinhos WHERE user_id = $1 AND LOWER(nome) = LOWER($2) AND ativo = true LIMIT 1',
+      [userId, normalized]
+    );
+    return rows.length ? new Cofrinho(rows[0]) : null;
+  }
+
+  static async findById(cofrinhoId) {
+    const { rows } = await query('SELECT * FROM cofrinhos WHERE id = $1', [cofrinhoId]);
+    return rows.length ? new Cofrinho(rows[0]) : null;
+  }
+
+  static async obterResumoUsuario(userId) {
+    const { rows } = await query(
+      `SELECT COUNT(*) as total, COALESCE(SUM(valor_atual), 0) as total_guardado,
+              COALESCE(SUM(meta), 0) as total_metas
+       FROM cofrinhos WHERE user_id = $1 AND ativo = true`,
+      [userId]
+    );
+    const r = rows[0];
     return {
-      diasRestantes: diasRestantes,
-      vencido: diasRestantes < 0,
-      proximoVencimento: diasRestantes <= 7 && diasRestantes > 0,
+      totalCofrinhos: parseInt(r.total),
+      totalGuardado: parseFloat(r.total_guardado),
+      totalMetas: parseFloat(r.total_metas)
     };
   }
 
-  // ✅ GERAR relatório do cofrinho
+  // --- Métodos de instância ---
+
+  async adicionarValor(valor, descricao = '') {
+    if (valor <= 0) throw new Error('Valor deve ser positivo');
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const valorAnterior = this.valorAtual;
+
+      const { rows } = await client.query(
+        `UPDATE cofrinhos SET valor_atual = valor_atual + $1, updated_at = NOW()
+         WHERE id = $2 RETURNING *`,
+        [valor, this.id]
+      );
+
+      await client.query(
+        `INSERT INTO movimentos_cofrinho (cofrinho_id, user_id, tipo, valor, descricao, valor_anterior, valor_atual)
+         VALUES ($1, $2, 'deposito', $3, $4, $5, $6)`,
+        [this.id, this.userId, valor, descricao, valorAnterior, rows[0].valor_atual]
+      );
+
+      await client.query('COMMIT');
+
+      this.valorAtual = parseFloat(rows[0].valor_atual);
+      this.atualizadoEm = rows[0].updated_at;
+      return this;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async retirarValor(valor, descricao = '') {
+    if (valor <= 0) throw new Error('Valor deve ser positivo');
+    if (valor > this.valorAtual) throw new Error('Saldo insuficiente no cofrinho');
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const valorAnterior = this.valorAtual;
+
+      const { rows } = await client.query(
+        `UPDATE cofrinhos SET valor_atual = valor_atual - $1, updated_at = NOW()
+         WHERE id = $2 AND valor_atual >= $1 RETURNING *`,
+        [valor, this.id]
+      );
+
+      if (rows.length === 0) throw new Error('Saldo insuficiente');
+
+      await client.query(
+        `INSERT INTO movimentos_cofrinho (cofrinho_id, user_id, tipo, valor, descricao, valor_anterior, valor_atual)
+         VALUES ($1, $2, 'retirada', $3, $4, $5, $6)`,
+        [this.id, this.userId, valor, descricao, valorAnterior, rows[0].valor_atual]
+      );
+
+      await client.query('COMMIT');
+
+      this.valorAtual = parseFloat(rows[0].valor_atual);
+      this.atualizadoEm = rows[0].updated_at;
+      return this;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async buscarHistorico(limite = 10, offset = 0) {
+    const { rows } = await query(
+      `SELECT * FROM movimentos_cofrinho WHERE cofrinho_id = $1
+       ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [this.id, limite, offset]
+    );
+    return rows;
+  }
+
+  async desativar() {
+    await query(
+      'UPDATE cofrinhos SET ativo = false, updated_at = NOW() WHERE id = $1',
+      [this.id]
+    );
+    this.ativo = false;
+  }
+
+  async update(data) {
+    const fields = [];
+    const values = [];
+    let i = 1;
+
+    if (data.nome !== undefined) { fields.push(`nome = $${i++}`); values.push(Cofrinho.normalizeNome(data.nome)); }
+    if (data.meta !== undefined) { fields.push(`meta = $${i++}`); values.push(data.meta); }
+    if (data.prazo !== undefined) { fields.push(`prazo = $${i++}`); values.push(data.prazo); }
+    if (data.descricao !== undefined) { fields.push(`descricao = $${i++}`); values.push(data.descricao); }
+
+    if (fields.length === 0) return this;
+
+    fields.push(`updated_at = NOW()`);
+    values.push(this.id);
+
+    const { rows } = await query(
+      `UPDATE cofrinhos SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
+      values
+    );
+    return new Cofrinho(rows[0]);
+  }
+
+  // --- Métodos puros (sem DB) ---
+
+  calcularProgresso() {
+    const percentual = this.meta > 0 ? (this.valorAtual / this.meta) * 100 : 0;
+    return {
+      percentual: Math.min(percentual, 100).toFixed(1),
+      faltam: Math.max(this.meta - this.valorAtual, 0),
+      atingido: this.valorAtual >= this.meta
+    };
+  }
+
+  verificarPrazo() {
+    if (!this.prazo) return { temPrazo: false };
+    const agora = moment();
+    const prazo = moment(this.prazo);
+    const diasRestantes = prazo.diff(agora, 'days');
+    return {
+      temPrazo: true,
+      diasRestantes,
+      vencido: diasRestantes < 0,
+      proximoVencimento: diasRestantes <= 7 && diasRestantes >= 0
+    };
+  }
+
   gerarRelatorio() {
     const progresso = this.calcularProgresso();
     const prazo = this.verificarPrazo();
 
-    let relatorio = `💰 **COFRINHO: ${this.nome.toUpperCase()}**\n\n`;
-
-    // Progresso
-    relatorio += `📊 **Progresso:**\n`;
-    relatorio += `💵 Valor atual: ${this.formatarMoeda(
-      progresso.valorAtual
-    )}\n`;
-    relatorio += `🎯 Meta: ${this.formatarMoeda(progresso.meta)}\n`;
-    relatorio += `📈 Progresso: ${progresso.percentual}%\n`;
+    let msg = `💰 *Cofrinho: ${this.nome}*\n\n`;
+    msg += `🎯 Meta: ${Cofrinho.formatarMoeda(this.meta)}\n`;
+    msg += `💵 Guardado: ${Cofrinho.formatarMoeda(this.valorAtual)}\n`;
+    msg += `📊 Progresso: ${progresso.percentual}%\n`;
 
     if (!progresso.atingido) {
-      relatorio += `🎯 Faltam: ${this.formatarMoeda(progresso.faltam)}\n`;
+      msg += `📉 Faltam: ${Cofrinho.formatarMoeda(progresso.faltam)}\n`;
     } else {
-      relatorio += `✅ Meta atingida! 🎉\n`;
+      msg += `✅ *Meta atingida!*\n`;
     }
 
-    // Prazo
-    if (prazo) {
-      relatorio += `\n📅 **Prazo:**\n`;
+    if (prazo.temPrazo) {
       if (prazo.vencido) {
-        relatorio += `⚠️ Prazo vencido há ${Math.abs(
-          prazo.diasRestantes
-        )} dias\n`;
-      } else if (prazo.proximoVencimento) {
-        relatorio += `⏰ Restam ${prazo.diasRestantes} dias!\n`;
+        msg += `⚠️ Prazo vencido!\n`;
       } else {
-        relatorio += `📆 Restam ${prazo.diasRestantes} dias\n`;
+        msg += `📅 Prazo: ${moment(this.prazo).format('DD/MM/YYYY')} (${prazo.diasRestantes} dias)\n`;
       }
     }
 
-    // Descrição
-    if (this.descricao) {
-      relatorio += `\n📝 **Objetivo:** ${this.descricao}\n`;
-    }
-
-    return relatorio;
+    return msg;
   }
 
-  // ✅ FORMATAR moeda
-  formatarMoeda(valor) {
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    }).format(valor);
+  static formatarMoeda(valor) {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
   }
 
-  // ✅ VALIDAR dados com melhorias
   static validate(data) {
     const errors = [];
+    const nome = data.nome || data.name;
+    const meta = data.meta || data.target;
 
-    if (!data.userId) {
-      errors.push("ID do usuário é obrigatório");
-    }
-
-    if (!data.nome || data.nome.trim().length < 2) {
-      errors.push("Nome deve ter pelo menos 2 caracteres");
-    }
-
-    // ✅ VALIDAR caracteres especiais no nome
-    if (data.nome && !/^[a-záàâãçéêíóôõú\s]+$/i.test(data.nome.trim())) {
-      errors.push("Nome deve conter apenas letras e espaços");
-    }
-
-    // ✅ VALIDAR tipo de meta
-    if (!data.meta || typeof data.meta !== "number" || isNaN(data.meta)) {
-      errors.push("Meta deve ser um número válido");
-    }
-
-    if (data.meta && data.meta <= 0) {
-      errors.push("Meta deve ser maior que zero");
-    }
-
-    if (data.meta && data.meta > 1000000) {
-      errors.push("Meta muito alta (máximo R$ 1.000.000)");
-    }
-
-    if (data.prazo && new Date(data.prazo) <= new Date()) {
-      errors.push("Prazo deve ser no futuro");
-    }
+    if (!nome || nome.trim().length < 2) errors.push('Nome deve ter no mínimo 2 caracteres');
+    if (!meta || meta <= 0) errors.push('Meta deve ser maior que zero');
+    if (meta > 10000000) errors.push('Meta muito alta (máximo R$ 10.000.000)');
+    if (data.prazo && moment(data.prazo).isBefore(moment())) errors.push('Prazo não pode ser no passado');
 
     return errors;
   }
 
-  // ✅ DESATIVAR cofrinho (soft delete)
-  async desativar() {
-    try {
-      this.ativo = false;
-      this.atualizadoEm = new Date();
-
-      await db.collection("cofrinhos").doc(this.id).update({
-        ativo: false,
-        atualizadoEm: this.atualizadoEm,
-      });
-
-      console.log(`🗑️ Cofrinho ${this.nome} desativado`);
-      return true;
-    } catch (error) {
-      console.error("❌ Erro ao desativar cofrinho:", error);
-      return false;
-    }
-  }
-
-  // ✅ DELETAR cofrinho permanentemente (só se vazio)
-  async deletarPermanentemente() {
-    try {
-      if (this.valorAtual > 0) {
-        throw new Error("Não é possível deletar cofrinho com saldo");
-      }
-
-      // Deletar movimentos relacionados
-      const movimentosSnapshot = await db
-        .collection("movimentos_cofrinho")
-        .where("cofrinhoId", "==", this.id)
-        .get();
-
-      const batch = db.batch();
-
-      movimentosSnapshot.docs.forEach((doc) => {
-        batch.delete(doc.ref);
-      });
-
-      // Deletar o cofrinho
-      batch.delete(db.collection("cofrinhos").doc(this.id));
-
-      await batch.commit();
-
-      console.log(`🗑️ Cofrinho ${this.nome} deletado permanentemente`);
-      return true;
-    } catch (error) {
-      console.error("❌ Erro ao deletar cofrinho:", error);
-      throw new Error(`Erro ao deletar cofrinho: ${error.message}`);
-    }
-  }
-
-  // ✅ ATUALIZAR cofrinho com validações
-  async update(updateData) {
-    try {
-      const allowedFields = ["nome", "meta", "prazo", "descricao", "ativo"];
-      const updates = {};
-
-      allowedFields.forEach((field) => {
-        if (updateData[field] !== undefined) {
-          // ✅ NORMALIZAR nome se estiver sendo atualizado
-          if (field === "nome" && updateData[field]) {
-            updates[field] = this.constructor.normalizeNome(updateData[field]);
-          } else {
-            updates[field] = updateData[field];
-          }
-        }
-      });
-
-      updates.atualizadoEm = new Date();
-
-      await db.collection("cofrinhos").doc(this.id).update(updates);
-
-      // Atualizar propriedades locais
-      Object.assign(this, updates);
-
-      console.log(`✅ Cofrinho ${this.nome} atualizado`);
-      return true;
-    } catch (error) {
-      console.error("❌ Erro ao atualizar cofrinho:", error);
-      return false;
-    }
-  }
-
-  // ✅ BUSCAR histórico de movimentos com paginação
-  async buscarHistorico(limite = 10, offset = 0) {
-    try {
-      let query = db
-        .collection("movimentos_cofrinho")
-        .where("cofrinhoId", "==", this.id)
-        .orderBy("data", "desc");
-
-      if (limite) {
-        query = query.limit(limite);
-      }
-
-      const snapshot = await query.get();
-
-      return snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        data: doc.data().data.toDate(),
-      }));
-    } catch (error) {
-      console.error("❌ Erro ao buscar histórico:", error);
-      return [];
-    }
-  }
-
-  // ✅ PARA formato de exibição
-  async toDisplayFormat() {
-    const progresso = this.calcularProgresso();
-    const prazo = this.verificarPrazo();
-
-    return {
-      id: this.id,
-      nome: this.nome,
-      meta: this.formatarMoeda(this.meta),
-      valorAtual: this.formatarMoeda(progresso.valorAtual),
-      faltam: this.formatarMoeda(progresso.faltam),
-      percentual: progresso.percentual,
-      atingido: progresso.atingido,
-      prazo: prazo,
-      descricao: this.descricao,
-      ativo: this.ativo,
-    };
-  }
-
-  // ✅ NOVO: Normalizar nome do cofrinho
   static normalizeNome(nome) {
-    if (!nome || typeof nome !== "string") {
-      return "";
-    }
-
-    return nome
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, " ") // Remove espaços duplos
-      .replace(/[^\w\sáàâãçéêíóôõú]/gi, ""); // Remove caracteres especiais exceto acentos
-  }
-
-  // ✅ NOVO: Verificar se nome já existe para o usuário
-  static async nomeJaExiste(userId, nome) {
-    try {
-      const nomeNormalizado = this.normalizeNome(nome);
-      const cofrinho = await this.findByName(userId, nomeNormalizado);
-      return cofrinho !== null;
-    } catch (error) {
-      console.error("❌ Erro ao verificar nome:", error);
-      return false;
-    }
-  }
-
-  // ✅ NOVO: Obter estatísticas do cofrinho
-  async obterEstatisticas() {
-    try {
-      const movimentos = await this.buscarHistorico(100); // Últimos 100 movimentos
-
-      const stats = {
-        totalDepositos: 0,
-        totalRetiradas: 0,
-        numeroDepositos: 0,
-        numeroRetiradas: 0,
-        mediaDeposito: 0,
-        mediaRetirada: 0,
-        ultimoMovimento: null,
-        periodicidadeMedia: 0,
-      };
-
-      let somaDepositos = 0;
-      let somaRetiradas = 0;
-
-      movimentos.forEach((mov, index) => {
-        if (mov.tipo === "deposito") {
-          stats.numeroDepositos++;
-          somaDepositos += mov.valor;
-        } else {
-          stats.numeroRetiradas++;
-          somaRetiradas += mov.valor;
-        }
-
-        if (index === 0) {
-          stats.ultimoMovimento = mov;
-        }
-      });
-
-      stats.totalDepositos = somaDepositos;
-      stats.totalRetiradas = somaRetiradas;
-      stats.mediaDeposito =
-        stats.numeroDepositos > 0 ? somaDepositos / stats.numeroDepositos : 0;
-      stats.mediaRetirada =
-        stats.numeroRetiradas > 0 ? somaRetiradas / stats.numeroRetiradas : 0;
-
-      return stats;
-    } catch (error) {
-      console.error("❌ Erro ao obter estatísticas:", error);
-      return null;
-    }
-  }
-
-  // ✅ NOVO: Gerar relatório de progresso detalhado
-  async gerarRelatorioDetalhado() {
-    try {
-      const progresso = this.calcularProgresso();
-      const prazo = this.verificarPrazo();
-      const stats = await this.obterEstatisticas();
-
-      let relatorio = `📊 **RELATÓRIO DETALHADO - ${this.nome.toUpperCase()}**\n\n`;
-
-      // Progresso básico
-      relatorio += `💰 **Status Atual:**\n`;
-      relatorio += `💵 Valor guardado: ${this.formatarMoeda(
-        progresso.valorAtual
-      )}\n`;
-      relatorio += `🎯 Meta: ${this.formatarMoeda(progresso.meta)}\n`;
-      relatorio += `📈 Progresso: ${progresso.percentual}%\n`;
-
-      if (!progresso.atingido) {
-        relatorio += `🎯 Faltam: ${this.formatarMoeda(progresso.faltam)}\n\n`;
-      } else {
-        relatorio += `✅ Meta atingida! 🎉\n\n`;
-      }
-
-      // Estatísticas de movimentação
-      if (stats) {
-        relatorio += `📋 **Histórico de Movimentação:**\n`;
-        relatorio += `📥 Total depositado: ${this.formatarMoeda(
-          stats.totalDepositos
-        )} (${stats.numeroDepositos}x)\n`;
-
-        if (stats.numeroRetiradas > 0) {
-          relatorio += `📤 Total retirado: ${this.formatarMoeda(
-            stats.totalRetiradas
-          )} (${stats.numeroRetiradas}x)\n`;
-        }
-
-        if (stats.numeroDepositos > 0) {
-          relatorio += `📊 Depósito médio: ${this.formatarMoeda(
-            stats.mediaDeposito
-          )}\n`;
-        }
-
-        if (stats.ultimoMovimento) {
-          const dataUltimo = moment(stats.ultimoMovimento.data).format(
-            "DD/MM/YYYY HH:mm"
-          );
-          relatorio += `⏰ Último movimento: ${dataUltimo}\n\n`;
-        }
-      }
-
-      // Prazo
-      if (prazo) {
-        relatorio += `📅 **Prazo:**\n`;
-        if (prazo.vencido) {
-          relatorio += `⚠️ Prazo vencido há ${Math.abs(
-            prazo.diasRestantes
-          )} dias\n\n`;
-        } else if (prazo.proximoVencimento) {
-          relatorio += `⏰ Atenção! Restam apenas ${prazo.diasRestantes} dias!\n\n`;
-        } else {
-          relatorio += `📆 Restam ${prazo.diasRestantes} dias para atingir a meta\n\n`;
-        }
-      }
-
-      // Objetivo
-      if (this.descricao) {
-        relatorio += `📝 **Objetivo:** ${this.descricao}\n\n`;
-      }
-
-      // Sugestões baseadas no progresso
-      relatorio += this.gerarSugestoes(progresso, prazo, stats);
-
-      return relatorio;
-    } catch (error) {
-      console.error("❌ Erro ao gerar relatório detalhado:", error);
-      return this.gerarRelatorio(); // Fallback para relatório simples
-    }
-  }
-
-  // ✅ NOVO: Gerar sugestões baseadas no progresso
-  gerarSugestoes(progresso, prazo, stats) {
-    let sugestoes = `💡 **Sugestões:**\n`;
-
-    if (progresso.atingido) {
-      sugestoes += `🎉 Parabéns! Você atingiu sua meta!\n`;
-      sugestoes += `💭 Considere criar um novo cofrinho ou aumentar esta meta.\n`;
-    } else {
-      // Sugestões baseadas no prazo
-      if (prazo && prazo.diasRestantes > 0) {
-        const valorPorDia = progresso.faltam / prazo.diasRestantes;
-        sugestoes += `📈 Para atingir a meta, você precisa guardar ${this.formatarMoeda(
-          valorPorDia
-        )} por dia.\n`;
-
-        if (stats && stats.mediaDeposito > 0) {
-          const depositosNecessarios = Math.ceil(
-            progresso.faltam / stats.mediaDeposito
-          );
-          sugestoes += `💰 Com sua média de ${this.formatarMoeda(
-            stats.mediaDeposito
-          )} por depósito, você precisa de mais ${depositosNecessarios} depósitos.\n`;
-        }
-      } else {
-        // Sem prazo definido
-        if (stats && stats.mediaDeposito > 0) {
-          const depositosNecessarios = Math.ceil(
-            progresso.faltam / stats.mediaDeposito
-          );
-          sugestoes += `💰 Mantendo sua média atual, você precisa de mais ${depositosNecessarios} depósitos para atingir a meta.\n`;
-        }
-      }
-
-      // Sugestão de frequência
-      if (progresso.percentual < 25) {
-        sugestoes += `🚀 Dica: Tente guardar uma quantia fixa toda semana para criar o hábito!\n`;
-      } else if (progresso.percentual < 75) {
-        sugestoes += `⚡ Você está no caminho certo! Continue com a disciplina.\n`;
-      } else {
-        sugestoes += `🏁 Falta pouco! Mantenha o foco para atingir sua meta!\n`;
-      }
-    }
-
-    return sugestoes;
-  }
-
-  // ✅ NOVO: Método para buscar cofrinhos próximos do prazo
-  static async buscarProximosDoVencimento(userId, dias = 7) {
-    try {
-      const cofrinhos = await this.findByUser(userId);
-      const proximosDoVencimento = [];
-
-      cofrinhos.forEach((cofrinho) => {
-        const prazo = cofrinho.verificarPrazo();
-        if (prazo && (prazo.proximoVencimento || prazo.vencido)) {
-          proximosDoVencimento.push({
-            cofrinho,
-            prazo,
-          });
-        }
-      });
-
-      return proximosDoVencimento;
-    } catch (error) {
-      console.error(
-        "❌ Erro ao buscar cofrinhos próximos do vencimento:",
-        error
-      );
-      return [];
-    }
-  }
-
-  // ✅ NOVO: Método para obter resumo de todos os cofrinhos do usuário
-  static async obterResumoUsuario(userId) {
-    try {
-      const cofrinhos = await this.findByUser(userId);
-
-      const resumo = {
-        totalCofrinhos: cofrinhos.length,
-        cofrinhosMeta: 0,
-        totalGuardado: 0,
-        totalMetas: 0,
-        progressoMedio: 0,
-        maisPróximoMeta: null,
-        maisDistanteMeta: null,
-      };
-
-      if (cofrinhos.length === 0) {
-        return resumo;
-      }
-
-      let somaProgressos = 0;
-      let menorProgresso = 100;
-      let maiorProgresso = 0;
-
-      cofrinhos.forEach((cofrinho) => {
-        const progresso = cofrinho.calcularProgresso();
-
-        resumo.totalGuardado += progresso.valorAtual;
-        resumo.totalMetas += progresso.meta;
-        somaProgressos += parseFloat(progresso.percentual);
-
-        if (progresso.atingido) {
-          resumo.cofrinhosMeta++;
-        }
-
-        // Encontrar mais próximo e mais distante da meta
-        const progressoNum = parseFloat(progresso.percentual);
-        if (progressoNum > maiorProgresso) {
-          maiorProgresso = progressoNum;
-          resumo.maisPróximoMeta = cofrinho;
-        }
-        if (progressoNum < menorProgresso) {
-          menorProgresso = progressoNum;
-          resumo.maisDistanteMeta = cofrinho;
-        }
-      });
-
-      resumo.progressoMedio = (somaProgressos / cofrinhos.length).toFixed(1);
-
-      return resumo;
-    } catch (error) {
-      console.error("❌ Erro ao obter resumo do usuário:", error);
-      return null;
-    }
+    if (!nome) return '';
+    return nome.trim().toLowerCase()
+      .replace(/[^a-záàâãéèêíïóôõöúçñ\s0-9]/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 }
 

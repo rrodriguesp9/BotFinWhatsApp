@@ -52,7 +52,8 @@ class NaturalLanguageProcessor {
       // Exportação
       export: [
         /(?:exportar|exporte|baixar|download)\s+(?:relatório|dados|este|esse)?\s*(?:mês|semana)?\s*(?:em|para)\s+(pdf|csv|excel)/i,
-        /(?:exporte|baixar)\s+(?:este\s+)?(?:mês|semana)\s+(?:em|para)\s+(pdf|csv|excel)/i
+        /(?:exporte|baixar)\s+(?:este\s+)?(?:mês|semana)\s+(?:em|para)\s+(pdf|csv|excel)/i,
+        /(?:exportar|exporte|baixar|download)\s+(?:em\s+)?(pdf|csv|excel)/i
       ],
 
       // Divisão de despesas
@@ -69,8 +70,24 @@ class NaturalLanguageProcessor {
 
       // Cofrinhos (antes de expense para "cofrinho viagem 2000" não confundir)
       savings: [
-        /(?:cofrinho|objetivo|guardar\s+para|poupar\s+para)\s+(?:para\s+)?([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i,
-        /(?:criar\s+)?(?:cofrinho|objetivo)\s+([a-záàâãéèêíïóôõöúçñ]+)\s+([\d.,]+)/i
+        // Adicionar: "adicionar 100 ao cofrinho viagem", "depositar 50 no cofrinho ferias"
+        /(?:adicionar|depositar|colocar|guardar)\s+([\d.,]+[kK]?)\s+(?:no|ao|pro)\s+(?:cofrinho)\s+(.+)/i,
+        // Retirar: "retirar 50 do cofrinho viagem", "tirar 100 do cofrinho ferias"
+        /(?:retirar|tirar|sacar|pegar)\s+([\d.,]+[kK]?)\s+(?:do|no)\s+(?:cofrinho)\s+(.+)/i,
+        // Listar: "meus cofrinhos", "listar cofrinhos", "ver cofrinhos"
+        /(?:meus?\s+)?cofrinhos$/i,
+        /(?:listar|ver)\s+cofrinhos/i,
+        // Ver específico: "ver cofrinho viagem", "status do cofrinho ferias"
+        /(?:ver|status|detalhe)\s+(?:do\s+)?cofrinho\s+(.+)/i,
+        // Criar: "cofrinho viagem 2000", "criar cofrinho ferias 5000"
+        /(?:cofrinho|objetivo|guardar\s+para|poupar\s+para)\s+(?:para\s+)?([a-záàâãéèêíïóôõöúçñ\s]+?)\s+([\d.,]+[kK]?)/i,
+        /(?:criar\s+)?(?:cofrinho|objetivo)\s+([a-záàâãéèêíïóôõöúçñ\s]+?)\s+([\d.,]+[kK]?)/i
+      ],
+
+      // Calendário / Agenda Google
+      calendar: [
+        /(?:conectar|ligar|vincular|ativar)\s+(?:o?\s*)?(?:calendário|calendar|agenda|google)/i,
+        /(?:desconectar|remover|desativar|desvincular)\s+(?:o?\s*)?(?:calendário|calendar|agenda|google)/i
       ],
 
       // Consultas de saldo
@@ -176,10 +193,13 @@ class NaturalLanguageProcessor {
         break;
 
       case 'savings':
+        extracted.extracted = this.extractSavingsAction(match, originalText);
+        break;
+
+      case 'calendar':
         extracted.extracted = {
-          type: 'savings',
-          name: match[1],
-          target: this.extractAmount(match[2])
+          type: 'calendar',
+          action: /desconectar|remover|desativar|desvincular/i.test(originalText) ? 'disconnect' : 'connect'
         };
         break;
 
@@ -402,6 +422,28 @@ class NaturalLanguageProcessor {
     return new Date();
   }
 
+  // Extrair ação de cofrinho com base no padrão que casou
+  extractSavingsAction(match, text) {
+    // Adicionar/depositar: "adicionar 100 ao cofrinho viagem"
+    if (/(?:adicionar|depositar|colocar|guardar)\s+[\d]/i.test(text)) {
+      return { type: 'savings', action: 'add', amount: this.extractAmount(match[1]), name: match[2]?.trim() };
+    }
+    // Retirar: "retirar 50 do cofrinho viagem"
+    if (/(?:retirar|tirar|sacar|pegar)\s+[\d]/i.test(text)) {
+      return { type: 'savings', action: 'withdraw', amount: this.extractAmount(match[1]), name: match[2]?.trim() };
+    }
+    // Listar: "meus cofrinhos", "listar cofrinhos"
+    if (/(?:meus?\s+)?cofrinhos$|(?:listar|ver)\s+cofrinhos/i.test(text)) {
+      return { type: 'savings', action: 'list' };
+    }
+    // Ver específico: "ver cofrinho viagem"
+    if (/(?:ver|status|detalhe)\s+(?:do\s+)?cofrinho\s+/i.test(text)) {
+      return { type: 'savings', action: 'view', name: match[1]?.trim() };
+    }
+    // Criar (padrão): "cofrinho viagem 2000"
+    return { type: 'savings', action: 'create', name: match[1]?.trim(), target: this.extractAmount(match[2]) };
+  }
+
   // Extrair período
   extractPeriod(text) {
     const lowerText = text.toLowerCase();
@@ -436,7 +478,15 @@ class NaturalLanguageProcessor {
            `• "Meta de transporte 200"\n\n` +
            
            `💰 **Cofrinhos:**\n` +
-           `• "Criar cofrinho viagem 2000"\n\n` +
+           `• "Cofrinho viagem 2000" (criar)\n` +
+           `• "Adicionar 100 ao cofrinho viagem"\n` +
+           `• "Retirar 50 do cofrinho viagem"\n` +
+           `• "Meus cofrinhos" (listar)\n` +
+           `• "Ver cofrinho viagem"\n\n` +
+
+           `📅 **Calendário:**\n` +
+           `• "Conectar calendário"\n` +
+           `• "Desconectar calendário"\n\n` +
            
            `📤 **Exportação:**\n` +
            `• "Exporte este mês em PDF"\n` +

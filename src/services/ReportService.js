@@ -3,6 +3,7 @@ const ExcelJS = require('exceljs');
 const Transaction = require('../models/Transaction');
 const Goal = require('../models/Goal');
 const moment = require('moment');
+const PdfService = require('./PdfService');
 
 class ReportService {
   constructor() {
@@ -22,7 +23,7 @@ class ReportService {
 
       switch (format.toLowerCase()) {
         case 'pdf':
-          return await this.generatePDFReport(userId, transactions, stats, goals, balance, period);
+          return await this._generateRichPDF(transactions, stats, balance, period);
         case 'csv':
           return await this.generateCSVReport(transactions, stats, period);
         case 'excel':
@@ -36,14 +37,34 @@ class ReportService {
     }
   }
 
-  // Gerar relatório PDF
-  async generatePDFReport(userId, transactions, stats, goals, balance, period) {
-    // Pré-calcular progresso das metas (async) antes de gerar o PDF (sync)
-    const goalsData = [];
-    for (const goal of goals) {
-      const progress = await goal.calculateProgress();
-      goalsData.push({ category: goal.category, monthlyLimit: goal.monthlyLimit, progress });
+  // Gerar PDF rico via PdfService
+  async _generateRichPDF(transactions, stats, balance, period) {
+    try {
+      const startDate = Transaction.getPeriodStartDate(period);
+      const endDate = new Date();
+
+      const totalIncome = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+      const totalExpenses = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+
+      const pdfStats = { totalIncome, totalExpenses, categories: stats };
+      const formatMoeda = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+      if (period === 'week') {
+        const dadosResumo = PdfService.formatarDadosResumo(transactions, pdfStats, balance, startDate, endDate);
+        return await PdfService.gerarPDFResumoSemanal(dadosResumo);
+      } else {
+        const dadosResumo = PdfService.formatarDadosMensais(transactions, pdfStats, balance, startDate, endDate);
+        return await PdfService.gerarPDFResumoMensal(dadosResumo);
+      }
+    } catch (error) {
+      console.error('⚠️ PdfService falhou, usando PDF básico:', error.message);
+      return await this._generateBasicPDF(transactions, stats, balance, period);
     }
+  }
+
+  // PDF básico (fallback)
+  async _generateBasicPDF(transactions, stats, balance, period) {
+    const goalsData = [];
 
     return new Promise((resolve, reject) => {
       try {

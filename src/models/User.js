@@ -17,6 +17,7 @@ class User {
       language: row.language || 'pt-BR',
       currency: row.currency || 'BRL'
     };
+    this.googleTokens = row.google_tokens || null;
     this.createdAt = row.created_at;
   }
 
@@ -51,6 +52,16 @@ class User {
     return new User(rows[0]);
   }
 
+  // Buscar usuário por ID
+  static async findById(userId) {
+    const { rows } = await query(
+      'SELECT * FROM users WHERE id = $1 AND is_active = true LIMIT 1',
+      [userId]
+    );
+    if (rows.length === 0) return null;
+    return new User(rows[0]);
+  }
+
   // Verificar PIN
   async verifyPin(pin) {
     return bcrypt.compare(pin, this.pinHash);
@@ -63,6 +74,14 @@ class User {
       [name, phoneNumber]
     );
     return result.rows[0];
+  }
+
+  // Atualizar tokens do Google Calendar
+  static async updateGoogleTokens(userId, tokens) {
+    await query(
+      'UPDATE users SET google_tokens = $1, updated_at = NOW() WHERE id = $2',
+      [JSON.stringify(tokens), userId]
+    );
   }
 
   // Atualizar PIN

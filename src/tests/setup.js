@@ -18,6 +18,4 @@ jest.setTimeout(10000);
 process.env.WHATSAPP_API_URL = 'https://api.whatsapp.com/v1';
 process.env.WHATSAPP_TOKEN = 'test_token';
 process.env.WHATSAPP_PHONE_NUMBER_ID = 'test_phone_id';
-process.env.FIREBASE_PROJECT_ID = 'test_project';
-process.env.JWT_SECRET = 'test_secret';
 process.env.TESSERACT_LANG = 'por'; 

@@ -231,24 +231,25 @@ class WhatsAppService {
     return contentTypes[mediaType] || 'application/octet-stream';
   }
 
-  // Validar número de telefone
+  // Validar número de telefone brasileiro
   validatePhoneNumber(phoneNumber) {
-    // Remover caracteres especiais
-    const cleanNumber = phoneNumber.replace(/[^\d]/g, '');
-    
-    // Verificar se é um número brasileiro válido
-    if (cleanNumber.length === 11 && cleanNumber.startsWith('55')) {
-      return cleanNumber;
+    const clean = phoneNumber.replace(/[^\d]/g, '');
+
+    // Formato internacional: 55 + DDD(2) + número(8-9) = 12 ou 13 dígitos
+    if ((clean.length === 12 || clean.length === 13) && clean.startsWith('55')) {
+      return clean;
     }
-    
-    if (cleanNumber.length === 10) {
-      return `55${cleanNumber}`;
+
+    // Local sem código país: DDD(2) + número(8-9) = 10 ou 11 dígitos
+    if (clean.length === 10 || clean.length === 11) {
+      return `55${clean}`;
     }
-    
-    if (cleanNumber.length === 11 && cleanNumber.startsWith('0')) {
-      return `55${cleanNumber.substring(1)}`;
+
+    // Com zero na frente: 0XX XXXXX-XXXX
+    if ((clean.length === 11 || clean.length === 12) && clean.startsWith('0')) {
+      return `55${clean.substring(1)}`;
     }
-    
+
     return null;
   }
 

@@ -1,10 +1,19 @@
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const Goal = require('../models/Goal');
+const Cofrinho = require('../models/Cofrinho');
 const NaturalLanguageProcessor = require('../services/NaturalLanguageProcessor');
 const OCRService = require('../services/OCRService');
 const WhatsAppService = require('../services/WhatsAppService');
 const ReportService = require('../services/ReportService');
+
+// Google Calendar — integração opcional
+let GoogleCalendarService = null;
+try {
+  GoogleCalendarService = require('../services/GoogleCalendarService');
+} catch (e) {
+  console.log('⚠️ GoogleCalendarService não disponível:', e.message);
+}
 
 // Whisper (áudio) — via Groq (grátis) ou OpenAI (pago)
 let WhisperService = null;
@@ -90,6 +99,20 @@ class BotController {
       console.log('⚠️ NLP AI desativado (configure GROQ_API_KEY ou OPENAI_API_KEY)');
     }
 
+    // Google Calendar — integração opcional
+    if (GoogleCalendarService && process.env.GOOGLE_CLIENT_ID) {
+      try {
+        this.calendar = new GoogleCalendarService();
+        console.log('✅ Google Calendar ativado');
+      } catch (e) {
+        this.calendar = null;
+        console.log('⚠️ GoogleCalendarService falhou ao instanciar:', e.message);
+      }
+    } else {
+      this.calendar = null;
+      console.log('⚠️ Google Calendar desativado (configure GOOGLE_CLIENT_ID)');
+    }
+
     // Cache de sessões ativas
     this.sessions = new Map();
   }
@@ -160,6 +183,10 @@ class BotController {
         return await this.handleAudioConfirmation(user, message, currentSession);
       }
 
+      if (currentSession && currentSession.type === 'pin_verification') {
+        return await this.handlePinVerification(user, message, currentSession);
+      }
+
       return await this.processTextMessageInternal(user, message);
 
     } catch (error) {
@@ -201,6 +228,9 @@ class BotController {
 
       case 'savings':
         return await this.handleSavingsGoal(user, intent.extracted);
+
+      case 'calendar':
+        return await this.handleCalendar(user, intent.extracted);
 
       case 'split':
         return await this.handleSplitExpense(user, intent.extracted);
@@ -532,20 +562,151 @@ class BotController {
     }
   }
 
-  // Lidar com cofrinho
+  // Lidar com cofrinho — dispatcher
   async handleSavingsGoal(user, savingsData) {
     try {
-      // Implementar criação de cofrinho
-      await this.sendMessage(user.phoneNumber,
-        `💰 **Cofrinho criado!**\n\n` +
-        `🎯 **Objetivo:** ${savingsData.name}\n` +
-        `💰 **Meta:** ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(savingsData.target)}\n\n` +
-        `Para adicionar dinheiro ao cofrinho, digite:\n` +
-        `"adicionar 100 ao cofrinho ${savingsData.name}"`);
-
+      const action = savingsData.action || 'create';
+      switch (action) {
+        case 'create':
+          return await this.handleCofrinhoCreate(user, savingsData);
+        case 'add':
+          return await this.handleCofrinhoAdd(user, savingsData);
+        case 'withdraw':
+          return await this.handleCofrinhoWithdraw(user, savingsData);
+        case 'list':
+          return await this.handleCofrinhoList(user);
+        case 'view':
+          return await this.handleCofrinhoView(user, savingsData);
+        default:
+          return await this.handleCofrinhoCreate(user, savingsData);
+      }
     } catch (error) {
-      console.error('❌ Erro ao criar cofrinho:', error);
-      await this.sendErrorMessage(user.phoneNumber);
+      console.error('❌ Erro no cofrinho:', error);
+      await this.sendMessage(user.phoneNumber,
+        `❌ Erro: ${error.message || 'Erro ao processar cofrinho'}`);
+    }
+  }
+
+  async handleCofrinhoCreate(user, data) {
+    const cofrinho = await Cofrinho.create({
+      userId: user.id,
+      nome: data.name,
+      meta: data.target,
+      prazo: data.prazo || null,
+      categoria: data.categoria || 'economia',
+      descricao: data.descricao || ''
+    });
+
+    await this.sendMessage(user.phoneNumber,
+      `💰 *Cofrinho criado!*\n\n` +
+      `🏷️ *Nome:* ${cofrinho.nome}\n` +
+      `🎯 *Meta:* ${Cofrinho.formatarMoeda(cofrinho.meta)}\n\n` +
+      `Para adicionar dinheiro:\n` +
+      `"adicionar 100 ao cofrinho ${cofrinho.nome}"`);
+  }
+
+  async handleCofrinhoAdd(user, data) {
+    const cofrinho = await Cofrinho.findByName(user.id, data.name);
+    if (!cofrinho) {
+      await this.sendMessage(user.phoneNumber,
+        `❌ Cofrinho "${data.name}" não encontrado.\n` +
+        `Digite "meus cofrinhos" para ver seus cofrinhos.`);
+      return;
+    }
+
+    await cofrinho.adicionarValor(data.amount, 'Depósito via chat');
+    const progresso = cofrinho.calcularProgresso();
+
+    await this.sendMessage(user.phoneNumber,
+      `✅ *Depósito realizado!*\n\n` +
+      `🏷️ *Cofrinho:* ${cofrinho.nome}\n` +
+      `💵 *Depositado:* ${Cofrinho.formatarMoeda(data.amount)}\n` +
+      `💰 *Total guardado:* ${Cofrinho.formatarMoeda(cofrinho.valorAtual)}\n` +
+      `📊 *Progresso:* ${progresso.percentual}%\n` +
+      (progresso.atingido ? `🎉 *Meta atingida!*` : `📉 *Faltam:* ${Cofrinho.formatarMoeda(progresso.faltam)}`));
+  }
+
+  async handleCofrinhoWithdraw(user, data) {
+    const cofrinho = await Cofrinho.findByName(user.id, data.name);
+    if (!cofrinho) {
+      await this.sendMessage(user.phoneNumber,
+        `❌ Cofrinho "${data.name}" não encontrado.\n` +
+        `Digite "meus cofrinhos" para ver seus cofrinhos.`);
+      return;
+    }
+
+    await cofrinho.retirarValor(data.amount, 'Retirada via chat');
+    const progresso = cofrinho.calcularProgresso();
+
+    await this.sendMessage(user.phoneNumber,
+      `✅ *Retirada realizada!*\n\n` +
+      `🏷️ *Cofrinho:* ${cofrinho.nome}\n` +
+      `💸 *Retirado:* ${Cofrinho.formatarMoeda(data.amount)}\n` +
+      `💰 *Saldo restante:* ${Cofrinho.formatarMoeda(cofrinho.valorAtual)}\n` +
+      `📊 *Progresso:* ${progresso.percentual}%`);
+  }
+
+  async handleCofrinhoList(user) {
+    const cofrinhos = await Cofrinho.findByUser(user.id);
+    if (cofrinhos.length === 0) {
+      await this.sendMessage(user.phoneNumber,
+        `💰 Você ainda não tem cofrinhos.\n\n` +
+        `Para criar: "cofrinho viagem 2000"`);
+      return;
+    }
+
+    const resumo = await Cofrinho.obterResumoUsuario(user.id);
+    let msg = `💰 *Seus Cofrinhos (${cofrinhos.length})*\n`;
+    msg += `💵 Total guardado: ${Cofrinho.formatarMoeda(resumo.totalGuardado)}\n\n`;
+
+    cofrinhos.forEach((c, i) => {
+      const prog = c.calcularProgresso();
+      msg += `${i + 1}. *${c.nome}*\n`;
+      msg += `   ${Cofrinho.formatarMoeda(c.valorAtual)} / ${Cofrinho.formatarMoeda(c.meta)} (${prog.percentual}%)\n`;
+    });
+
+    msg += `\nPara detalhes: "ver cofrinho <nome>"`;
+    await this.sendMessage(user.phoneNumber, msg);
+  }
+
+  async handleCofrinhoView(user, data) {
+    const cofrinho = await Cofrinho.findByName(user.id, data.name);
+    if (!cofrinho) {
+      await this.sendMessage(user.phoneNumber,
+        `❌ Cofrinho "${data.name}" não encontrado.\n` +
+        `Digite "meus cofrinhos" para ver seus cofrinhos.`);
+      return;
+    }
+
+    await this.sendMessage(user.phoneNumber, cofrinho.gerarRelatorio());
+  }
+
+  // Lidar com calendário
+  async handleCalendar(user, calendarData) {
+    if (!this.calendar) {
+      await this.sendMessage(user.phoneNumber,
+        `⚠️ Google Calendar não está configurado.\n` +
+        `Solicite ao administrador que configure as credenciais do Google.`);
+      return;
+    }
+
+    try {
+      if (calendarData.action === 'disconnect') {
+        await User.updateGoogleTokens(user.id, null);
+        await this.sendMessage(user.phoneNumber,
+          `✅ *Calendário desconectado!*\n\n` +
+          `Sua conta Google foi desvinculada.`);
+      } else {
+        // connect — gerar URL OAuth
+        const authUrl = this.calendar.generateAuthUrl(user.id);
+        await this.sendMessage(user.phoneNumber,
+          `📅 *Conectar Google Calendar*\n\n` +
+          `Clique no link abaixo para autorizar:\n${authUrl}\n\n` +
+          `Após autorizar, seus compromissos serão sincronizados automaticamente.`);
+      }
+    } catch (error) {
+      console.error('❌ Erro no calendário:', error);
+      await this.sendMessage(user.phoneNumber, `❌ Erro ao processar calendário: ${error.message}`);
     }
   }
 
@@ -577,24 +738,67 @@ class BotController {
     }
   }
 
-  // Lidar com exportação
+  // Lidar com exportação — pede PIN antes de enviar
   async handleExport(user, exportData) {
+    try {
+      this.sessions.set(user.phoneNumber, {
+        type: 'pin_verification',
+        action: 'export',
+        params: exportData,
+        timestamp: Date.now()
+      });
+      await this.sendMessage(user.phoneNumber,
+        `🔒 Para exportar seus dados, digite seu *PIN de 4 dígitos*:`);
+    } catch (error) {
+      console.error('❌ Erro ao solicitar PIN:', error);
+      await this.sendErrorMessage(user.phoneNumber);
+    }
+  }
+
+  // Verificação de PIN
+  async handlePinVerification(user, message, session) {
+    const pin = message.trim();
+    this.sessions.delete(user.phoneNumber);
+
+    if (!/^\d{4}$/.test(pin)) {
+      await this.sendMessage(user.phoneNumber,
+        '❌ PIN inválido. Operação cancelada.\n' +
+        'O PIN deve ter 4 dígitos numéricos.');
+      return;
+    }
+
+    const isValid = await user.verifyPin(pin);
+    if (!isValid) {
+      await this.sendMessage(user.phoneNumber,
+        '❌ PIN incorreto. Operação cancelada.');
+      return;
+    }
+
+    // PIN correto — executar operação salva
+    switch (session.action) {
+      case 'export':
+        return await this._executeExport(user, session.params);
+      default:
+        await this.sendMessage(user.phoneNumber, '✅ PIN verificado.');
+    }
+  }
+
+  // Executar exportação após verificação de PIN
+  async _executeExport(user, exportData) {
     try {
       const format = exportData.format || 'pdf';
       const period = exportData.period || 'month';
-      
-      // Gerar relatório
-      const reportBuffer = await this.report.generateReport(user.id, format, period);
-      
-      // Enviar arquivo
-      await this.whatsapp.sendMedia(user.phoneNumber, reportBuffer, format);
-      
-      await this.sendMessage(user.phoneNumber,
-        `📤 **Relatório enviado!**\n\n` +
-        `📄 **Formato:** ${format.toUpperCase()}\n` +
-        `📅 **Período:** ${period}\n\n` +
-        `O arquivo foi enviado acima.`);
 
+      await this.sendMessage(user.phoneNumber, '⏳ Gerando relatório...');
+
+      const reportBuffer = await this.report.generateReport(user.id, format, period);
+      await this.whatsapp.sendMedia(user.phoneNumber, reportBuffer, format);
+
+      await this.sendMessage(user.phoneNumber,
+        `📤 *Relatório enviado!*\n\n` +
+        `📄 *Formato:* ${format.toUpperCase()}\n` +
+        `📅 *Período:* ${period}\n\n` +
+        `O arquivo foi enviado acima.`);
     } catch (error) {
       console.error('❌ Erro ao exportar:', error);
       await this.sendErrorMessage(user.phoneNumber);
