@@ -21,15 +21,13 @@ class User {
     this.createdAt = row.created_at;
   }
 
-  // Criar novo usuário
-  static async create(phoneNumber, name = '', pin = '1234') {
-    const pinHash = await bcrypt.hash(pin, 10);
-
+  // Criar novo usuário (sem PIN padrão — onboarding pede para criar)
+  static async create(phoneNumber, name = '') {
     const { rows } = await query(
       `INSERT INTO users (phone_number, name, pin_hash)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [phoneNumber, name, pinHash]
+      [phoneNumber, name, '']
     );
 
     // Criar saldo inicial
@@ -64,6 +62,7 @@ class User {
 
   // Verificar PIN
   async verifyPin(pin) {
+    if (!this.pinHash) return false;
     return bcrypt.compare(pin, this.pinHash);
   }
 

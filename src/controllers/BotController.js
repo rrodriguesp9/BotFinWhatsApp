@@ -191,6 +191,14 @@ class BotController {
         return await this.handlePinVerification(user, message, currentSession);
       }
 
+      if (currentSession && currentSession.type === 'pin_change') {
+        return await this.handlePinChangeStep(user, message, currentSession);
+      }
+
+      if (currentSession && currentSession.type === 'pin_reset') {
+        return await this.handlePinResetStep(user, message, currentSession);
+      }
+
       return await this.processTextMessageInternal(user, message);
 
     } catch (error) {
@@ -247,6 +255,9 @@ class BotController {
 
       case 'help':
         return await this.sendHelpMessage(user.phoneNumber);
+
+      case 'pin':
+        return await this.handlePinManagement(user, intent.extracted);
 
       case 'silent':
         return await this.handleSilentMode(user, intent.extracted.days);
@@ -897,6 +908,143 @@ class BotController {
         return await this._executeExport(user, session.params);
       default:
         await this.sendMessage(user.phoneNumber, '✅ PIN verificado.');
+    }
+  }
+
+  // Gerenciamento de PIN — dispatcher
+  async handlePinManagement(user, data) {
+    if (data.action === 'reset' || data.action === 'create' || !user.pinHash) {
+      // Reset ou criar: pede novo PIN sem verificar o antigo
+      this.sessions.set(user.phoneNumber, {
+        type: 'pin_reset',
+        step: 'new_pin',
+        timestamp: Date.now()
+      });
+      const msg = !user.pinHash
+        ? `🔒 *Criar PIN*\n\nDigite um *PIN de 4 dígitos* para proteger suas informações:`
+        : `🔒 *Redefinir PIN*\n\nDigite seu novo *PIN de 4 dígitos*:`;
+      await this.sendMessage(user.phoneNumber, msg);
+      return;
+    }
+
+    if (data.action === 'change') {
+      this.sessions.set(user.phoneNumber, {
+        type: 'pin_change',
+        step: 'current_pin',
+        timestamp: Date.now()
+      });
+      await this.sendMessage(user.phoneNumber,
+        `🔒 *Alterar PIN*\n\nDigite seu *PIN atual*:`);
+      return;
+    }
+
+    // info
+    await this.sendMessage(user.phoneNumber,
+      `🔒 *PIN de Segurança*\n\n` +
+      `${user.pinHash ? '✅ Você tem um PIN configurado.' : '❌ Você não tem PIN.'}\n\n` +
+      `• "alterar pin" — trocar seu PIN\n` +
+      `• "resetar pin" — redefinir se esqueceu`);
+  }
+
+  // Fluxo: alterar PIN (current → new → confirm)
+  async handlePinChangeStep(user, message, session) {
+    const pin = message.trim();
+
+    if (session.step === 'current_pin') {
+      if (!/^\d{4}$/.test(pin)) {
+        await this.sendMessage(user.phoneNumber,
+          'O PIN deve ter *4 dígitos numéricos*.\nDigite seu PIN atual:');
+        return;
+      }
+
+      const isValid = await user.verifyPin(pin);
+      if (!isValid) {
+        this.sessions.delete(user.phoneNumber);
+        await this.sendMessage(user.phoneNumber,
+          '❌ PIN incorreto. Operação cancelada.\n\n' +
+          'Se esqueceu seu PIN, digite "resetar pin".');
+        return;
+      }
+
+      this.sessions.set(user.phoneNumber, {
+        type: 'pin_change',
+        step: 'new_pin',
+        timestamp: Date.now()
+      });
+      await this.sendMessage(user.phoneNumber,
+        '✅ PIN atual confirmado.\n\nDigite seu *novo PIN de 4 dígitos*:');
+      return;
+    }
+
+    if (session.step === 'new_pin') {
+      if (!/^\d{4}$/.test(pin)) {
+        await this.sendMessage(user.phoneNumber,
+          'O PIN deve ter exatamente *4 dígitos numéricos*.\nExemplo: 1234');
+        return;
+      }
+
+      this.sessions.set(user.phoneNumber, {
+        type: 'pin_change',
+        step: 'confirm_pin',
+        newPin: pin,
+        timestamp: Date.now()
+      });
+      await this.sendMessage(user.phoneNumber,
+        `Confirme o novo PIN digitando-o novamente:`);
+      return;
+    }
+
+    if (session.step === 'confirm_pin') {
+      this.sessions.delete(user.phoneNumber);
+
+      if (pin !== session.newPin) {
+        await this.sendMessage(user.phoneNumber,
+          '❌ Os PINs não coincidem. Operação cancelada.\n\n' +
+          'Para tentar novamente, digite "alterar pin".');
+        return;
+      }
+
+      await user.updatePin(pin);
+      await this.sendMessage(user.phoneNumber,
+        '✅ *PIN alterado com sucesso!*');
+    }
+  }
+
+  // Fluxo: resetar PIN (new → confirm, sem pedir o antigo)
+  async handlePinResetStep(user, message, session) {
+    const pin = message.trim();
+
+    if (session.step === 'new_pin') {
+      if (!/^\d{4}$/.test(pin)) {
+        await this.sendMessage(user.phoneNumber,
+          'O PIN deve ter exatamente *4 dígitos numéricos*.\nExemplo: 1234');
+        return;
+      }
+
+      this.sessions.set(user.phoneNumber, {
+        type: 'pin_reset',
+        step: 'confirm_pin',
+        newPin: pin,
+        timestamp: Date.now()
+      });
+      await this.sendMessage(user.phoneNumber,
+        'Confirme o novo PIN digitando-o novamente:');
+      return;
+    }
+
+    if (session.step === 'confirm_pin') {
+      this.sessions.delete(user.phoneNumber);
+
+      if (pin !== session.newPin) {
+        await this.sendMessage(user.phoneNumber,
+          '❌ Os PINs não coincidem. Operação cancelada.\n\n' +
+          'Para tentar novamente, digite "resetar pin".');
+        return;
+      }
+
+      await user.updatePin(pin);
+      await this.sendMessage(user.phoneNumber,
+        `✅ *PIN ${user.pinHash ? 'redefinido' : 'criado'} com sucesso!*`);
     }
   }
 

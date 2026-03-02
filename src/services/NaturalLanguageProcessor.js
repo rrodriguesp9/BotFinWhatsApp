@@ -45,6 +45,14 @@ class NaturalLanguageProcessor {
         /(?:ajuda|help|comandos|como\s+(?:usar|funciona)|o\s+que\s+posso)/i
       ],
 
+      // Gerenciamento de PIN
+      pin: [
+        /(?:alterar|mudar|trocar|modificar)\s+(?:o?\s*)?(?:pin|senha)/i,
+        /(?:resetar|redefinir|esqueci)\s+(?:o?\s*)?(?:pin|senha)/i,
+        /(?:criar|definir|configurar)\s+(?:o?\s*)?(?:pin|senha)/i,
+        /(?:meu\s+)?pin$/i
+      ],
+
       // Modo silencioso
       silent: [
         /(?:pausar|silenciar|silêncio)\s+(?:notificações?|alertas?)\s+(?:por\s+)?(\d+)\s+(?:dias?|dia)/i,
@@ -227,6 +235,15 @@ class NaturalLanguageProcessor {
       case 'help':
         extracted.extracted = {
           type: 'help'
+        };
+        break;
+
+      case 'pin':
+        extracted.extracted = {
+          type: 'pin',
+          action: /resetar|redefinir|esqueci/i.test(originalText) ? 'reset' :
+                  /alterar|mudar|trocar|modificar/i.test(originalText) ? 'change' :
+                  /criar|definir|configurar/i.test(originalText) ? 'create' : 'info'
         };
         break;
 
@@ -500,6 +517,10 @@ class NaturalLanguageProcessor {
            `• "Exporte este mês em PDF"\n` +
            `• "Exporte agosto em CSV"\n\n` +
            
+           `🔒 **PIN:**\n` +
+           `• "Alterar pin"\n` +
+           `• "Resetar pin"\n\n` +
+
            `🔕 **Configurações:**\n` +
            `• "Pausar notificações por 3 dias"\n\n` +
            
