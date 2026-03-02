@@ -256,6 +256,7 @@ app.get("/api/debug", async (req, res) => {
     DB_HOST: process.env.DB_HOST || "MISSING",
     DB_NAME: process.env.DB_NAME || "MISSING",
     NODE_ENV: process.env.NODE_ENV || "MISSING",
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY ? `SET (${process.env.OPENAI_API_KEY.substring(0, 7)}...)` : "MISSING",
   };
 
   // 2. Testar database
@@ -290,6 +291,36 @@ app.get("/api/debug", async (req, res) => {
     results.tests.userQuery = { status: "OK", userFound: !!testUser };
   } catch (err) {
     results.tests.userQuery = { status: "FAIL", error: err.message };
+  }
+
+  // 6. Testar serviços de mídia (Whisper, OpenAI Vision, OpenAI NLP)
+  results.tests.services = {
+    whisperService: botController.whisperService ? "ACTIVE" : "INACTIVE (sem OPENAI_API_KEY ou módulo falhou)",
+    openaiNLP: botController.openaiNLP ? "ACTIVE" : "INACTIVE",
+    openaiOCR: botController.openaiOCR ? "ACTIVE" : "INACTIVE",
+    googleVisionOCR: botController.googleVisionOCR ? "ACTIVE" : "INACTIVE (opcional)",
+  };
+
+  // 7. Testar conectividade com OpenAI (chamada real, rápida)
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const OpenAI = require('openai');
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const testResponse = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        max_tokens: 5,
+        messages: [{ role: 'user', content: 'Responda apenas: OK' }],
+      });
+      results.tests.openaiAPI = {
+        status: "OK",
+        model: 'gpt-4o-mini',
+        response: testResponse.choices[0]?.message?.content?.trim(),
+      };
+    } catch (err) {
+      results.tests.openaiAPI = { status: "FAIL", error: err.message };
+    }
+  } else {
+    results.tests.openaiAPI = { status: "SKIPPED", reason: "OPENAI_API_KEY não configurada" };
   }
 
   res.json(results);

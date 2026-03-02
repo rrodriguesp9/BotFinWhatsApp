@@ -100,23 +100,36 @@ class WhatsAppService {
   // Baixar mídia pelo media ID (Graph API exige 2 etapas: buscar URL, depois baixar)
   async downloadMedia(mediaId) {
     try {
-      // Etapa 1: obter a URL real do arquivo a partir do media ID
-      const metaResponse = await this.client.get(`/${mediaId}`);
+      console.log(`📥 Baixando mídia ID: ${mediaId}`);
+
+      // Etapa 1: obter a URL real do arquivo a partir do media ID (timeout 15s)
+      const metaResponse = await this.client.get(`/${mediaId}`, { timeout: 15000 });
       const mediaUrl = metaResponse.data.url;
 
-      // Etapa 2: baixar o arquivo usando a URL retornada
+      if (!mediaUrl) {
+        throw new Error('URL da mídia não retornada pela API do WhatsApp');
+      }
+      console.log(`📥 URL da mídia obtida (${mediaUrl.substring(0, 50)}...)`);
+
+      // Etapa 2: baixar o arquivo usando a URL retornada (timeout 60s para arquivos grandes)
       const response = await axios.get(mediaUrl, {
         headers: {
           'Authorization': `Bearer ${this.token}`
         },
-        responseType: 'arraybuffer'
+        responseType: 'arraybuffer',
+        timeout: 60000
       });
 
-      return Buffer.from(response.data);
+      const buffer = Buffer.from(response.data);
+      console.log(`📥 Mídia baixada: ${buffer.length} bytes`);
+      return buffer;
 
     } catch (error) {
-      console.error('❌ Erro ao baixar mídia:', error.response?.data || error.message);
-      throw error;
+      const errorDetail = error.response?.data
+        ? (typeof error.response.data === 'object' ? JSON.stringify(error.response.data) : error.response.data.toString().substring(0, 200))
+        : error.message;
+      console.error('❌ Erro ao baixar mídia:', errorDetail);
+      throw new Error(`Falha ao baixar mídia: ${error.message}`);
     }
   }
 

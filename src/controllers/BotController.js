@@ -213,10 +213,22 @@ class BotController {
   // Processar mensagem de mídia
   async processMediaMessage(user, mediaUrl) {
     try {
-      console.log('📷 Processando mídia...');
+      console.log(`📷 Processando mídia para ${user.phoneNumber}... (mediaId: ${mediaUrl})`);
 
-      // Baixar imagem
-      const imageBuffer = await this.whatsapp.downloadMedia(mediaUrl);
+      // Baixar imagem do WhatsApp
+      let imageBuffer;
+      try {
+        imageBuffer = await this.whatsapp.downloadMedia(mediaUrl);
+      } catch (downloadError) {
+        console.error('❌ Falha ao baixar imagem:', downloadError.message);
+        await this.sendMessage(user.phoneNumber,
+          '❌ Não consegui baixar a imagem.\n' +
+          'Tente enviar novamente ou digite o valor manualmente:\n' +
+          'Exemplo: "gastei 50 no mercado"');
+        return;
+      }
+
+      console.log(`📷 Imagem baixada: ${imageBuffer.length} bytes`);
 
       // Validar tamanho básico
       if (imageBuffer.length < 1024) {
@@ -233,21 +245,26 @@ class BotController {
 
       // Estratégia 1: OpenAI Vision (primário — mais preciso, como ChatGPT)
       if (this.openaiOCR) {
-        console.log('🤖 Usando OpenAI Vision para ler nota fiscal...');
-        ocrResult = await this.openaiOCR.processImage(imageBuffer);
+        try {
+          console.log('🤖 Usando OpenAI Vision para ler nota fiscal...');
+          ocrResult = await this.openaiOCR.processImage(imageBuffer);
+          console.log('🤖 OpenAI Vision resultado:', ocrResult.success ? 'sucesso' : `falha: ${ocrResult.error}`);
 
-        if (ocrResult.success) {
-          confirmationMessage = this.openaiOCR.generateConfirmationMessage(ocrResult.extracted);
-        } else {
-          console.log('⚠️ OpenAI Vision falhou:', ocrResult.error);
+          if (ocrResult.success) {
+            confirmationMessage = this.openaiOCR.generateConfirmationMessage(ocrResult.extracted);
+          }
+        } catch (visionError) {
+          console.error('❌ OpenAI Vision exceção:', visionError.message);
+          ocrResult = null;
         }
+      } else {
+        console.log('⚠️ OpenAI Vision OCR não está ativo (verifique OPENAI_API_KEY)');
       }
 
       // Estratégia 2: Tesseract (fallback — gratuito, sem API)
       if (!ocrResult || !ocrResult.success) {
-        console.log('📷 Tentando Tesseract OCR...');
+        console.log('📷 Tentando Tesseract OCR como fallback...');
         try {
-          // Timeout de 30 segundos para evitar travamento
           ocrResult = await Promise.race([
             this.ocr.processImage(imageBuffer),
             new Promise((_, reject) =>
@@ -293,7 +310,7 @@ class BotController {
       });
 
     } catch (error) {
-      console.error('❌ Erro ao processar mídia:', error);
+      console.error('❌ Erro ao processar mídia:', error.message, error.stack);
       await this.sendMessage(user.phoneNumber,
         '❌ Erro ao processar imagem. Tente novamente ou digite o valor manualmente.');
     }
@@ -691,6 +708,7 @@ class BotController {
     try {
       // Verificar se Whisper está disponível
       if (!this.whisperService) {
+        console.log('⚠️ WhisperService não ativo — verifique OPENAI_API_KEY');
         await this.sendMessage(phoneNumber,
           '⚠️ Processamento de áudio não disponível no momento.\n' +
           'Por favor, envie sua mensagem como texto.\n\n' +
@@ -698,15 +716,41 @@ class BotController {
         return;
       }
 
-      console.log('🎤 Processando áudio com Whisper...');
+      console.log(`🎤 Processando áudio de ${phoneNumber} (mediaId: ${audioMediaId})`);
 
-      // Baixar áudio
-      const audioBuffer = await this.whatsapp.downloadMedia(audioMediaId);
+      // Baixar áudio do WhatsApp
+      let audioBuffer;
+      try {
+        audioBuffer = await this.whatsapp.downloadMedia(audioMediaId);
+        console.log(`🎤 Áudio baixado: ${audioBuffer.length} bytes`);
+      } catch (downloadError) {
+        console.error('❌ Falha ao baixar áudio:', downloadError.message);
+        await this.sendMessage(phoneNumber,
+          '❌ Não consegui baixar o áudio.\n' +
+          'Tente enviar novamente ou envie como texto.');
+        return;
+      }
 
-      // Processar com Whisper
+      // Processar com Whisper (envia OGG diretamente, sem conversão)
       const result = await this.whisperService.processWhatsAppAudio(audioBuffer);
+      console.log(`🎤 Whisper resultado: success=${result.success}, transcrição="${result.transcription || ''}"`);
 
       if (result.success) {
+        // Se Whisper transcrever mas não extrair valor, usar OpenAI NLP
+        if (!result.extracted || !result.extracted.amount) {
+          console.log('🎤 Whisper transcreveu mas não extraiu valor, tentando NLP...');
+
+          // Buscar usuário para usar processTextMessageInternal
+          const user = await User.findByPhone(phoneNumber);
+          if (user && result.transcription) {
+            await this.sendMessage(phoneNumber,
+              `🎤 *Transcrição:* "${result.transcription}"\n\n` +
+              `Processando como texto...`);
+            await this.processTextMessageInternal(user, result.transcription);
+            return;
+          }
+        }
+
         const confirmationMessage = this.whisperService.generateConfirmationMessage(result.extracted);
         await this.sendMessage(phoneNumber, confirmationMessage);
 
@@ -718,14 +762,18 @@ class BotController {
           timestamp: Date.now()
         });
       } else {
+        console.log('❌ Whisper falhou:', result.error);
         await this.sendMessage(phoneNumber,
-          '❌ Não consegui processar o áudio.\n' +
-          'Tente falar mais claramente ou envie como texto.');
+          '❌ Não consegui processar o áudio.\n\n' +
+          'Tente:\n' +
+          '• Falar mais claramente\n' +
+          '• Enviar em um ambiente mais silencioso\n' +
+          '• Ou digitar o comando: "gastei 50 no mercado"');
       }
     } catch (error) {
-      console.error('❌ Erro no processamento de áudio:', error);
+      console.error('❌ Erro no processamento de áudio:', error.message, error.stack);
       await this.sendMessage(phoneNumber,
-        '❌ Erro ao processar áudio. Tente novamente.');
+        '❌ Erro ao processar áudio. Tente novamente ou envie como texto.');
     }
   }
 

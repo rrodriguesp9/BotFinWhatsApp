@@ -12,11 +12,12 @@ class OpenAIOCRService {
    */
   async processImage(imageBuffer) {
     try {
-      console.log('🔍 Processando imagem com OpenAI Vision...');
+      const mimeType = this.detectMimeType(imageBuffer);
+      console.log(`🔍 OpenAI Vision: processando imagem (${imageBuffer.length} bytes, ${mimeType})...`);
 
       // Converter buffer para base64
       const base64Image = imageBuffer.toString('base64');
-      const mimeType = this.detectMimeType(imageBuffer);
+      console.log(`🔍 OpenAI Vision: base64 gerado (${base64Image.length} chars)`);
 
       const response = await this.openai.chat.completions.create({
         model: this.model,
@@ -55,7 +56,7 @@ Regras:
                 type: 'image_url',
                 image_url: {
                   url: `data:${mimeType};base64,${base64Image}`,
-                  detail: 'high'
+                  detail: 'auto'
                 }
               }
             ]
@@ -100,6 +101,8 @@ Regras:
 
     } catch (error) {
       console.error('❌ OpenAI Vision erro:', error.message);
+      if (error.status) console.error('❌ OpenAI Vision HTTP status:', error.status);
+      if (error.code) console.error('❌ OpenAI Vision error code:', error.code);
       return { success: false, error: error.message };
     }
   }
