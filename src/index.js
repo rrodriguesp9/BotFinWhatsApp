@@ -333,7 +333,7 @@ app.get("/api/debug", async (req, res) => {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
       // Tentar modelos em ordem de preferência
-      const models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+      const models = ['gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash-002', 'gemini-1.5-pro-latest'];
       let geminiOk = false;
       for (const modelName of models) {
         try {
@@ -349,7 +349,9 @@ app.get("/api/debug", async (req, res) => {
           break;
         } catch (modelErr) {
           results.tests.geminiAPI = { status: "FAIL", model: modelName, error: modelErr.message.substring(0, 150) };
-          if (!modelErr.message.includes('429') && !modelErr.message.includes('quota')) break;
+          // Se é 429/quota ou 404, tentar próximo modelo
+          if (modelErr.message.includes('429') || modelErr.message.includes('quota') || modelErr.message.includes('404') || modelErr.message.includes('not found')) continue;
+          break; // Outro erro, parar
         }
       }
     } catch (err) {

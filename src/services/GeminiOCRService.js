@@ -3,8 +3,14 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 class GeminiOCRService {
   constructor() {
     this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    // Lista de modelos para tentar em ordem (free tier varia por modelo)
-    this.modelNames = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+    // Lista de modelos para tentar em ordem (free tier varia por modelo/conta)
+    this.modelNames = [
+      'gemini-2.0-flash-lite',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash-latest',
+      'gemini-1.5-flash-002',
+      'gemini-1.5-pro-latest',
+    ];
     console.log('✅ GeminiOCRService inicializado');
   }
 
@@ -64,8 +70,8 @@ Regras:
         } catch (modelError) {
           lastError = modelError;
           console.log(`⚠️ Modelo ${modelName} falhou: ${modelError.message.substring(0, 100)}`);
-          // Se é erro 429 (quota), tentar próximo modelo
-          if (modelError.message.includes('429') || modelError.message.includes('quota')) {
+          // Se é erro 429 (quota) ou 404 (modelo não existe), tentar próximo modelo
+          if (modelError.message.includes('429') || modelError.message.includes('quota') || modelError.message.includes('404') || modelError.message.includes('not found')) {
             continue;
           }
           // Outro tipo de erro, não adianta tentar outro modelo
