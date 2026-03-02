@@ -22,6 +22,14 @@ try {
   console.log('⚠️ GoogleVisionOCRService não disponível:', e.message);
 }
 
+// OpenAI NLP — fallback inteligente quando regex não entende
+let OpenAINLPService = null;
+try {
+  OpenAINLPService = require('../services/OpenAINLPService');
+} catch (e) {
+  console.log('⚠️ OpenAINLPService não disponível:', e.message);
+}
+
 class BotController {
   constructor() {
     this.nlp = new NaturalLanguageProcessor();
@@ -44,6 +52,14 @@ class BotController {
       console.log('✅ GoogleVisionOCR (fallback) ativado');
     } else {
       this.googleVisionOCR = null;
+    }
+
+    // OpenAI NLP — fallback quando regex não entende
+    if (OpenAINLPService && process.env.OPENAI_API_KEY) {
+      this.openaiNLP = new OpenAINLPService();
+      console.log('✅ OpenAI NLP (fallback inteligente) ativado');
+    } else {
+      this.openaiNLP = null;
     }
 
     // Cache de sessões ativas
@@ -126,9 +142,19 @@ class BotController {
 
   // Lógica interna de processamento NLP (separada para reuso no fallback de OCR)
   async processTextMessageInternal(user, message) {
-    // Processar linguagem natural
-    const intent = this.nlp.processMessage(message);
-    console.log('🧠 Intenção detectada:', intent);
+    // Processar linguagem natural (regex primeiro)
+    let intent = this.nlp.processMessage(message);
+    console.log('🧠 Regex NLP:', intent.intention, 'confidence:', intent.confidence);
+
+    // Se regex não entendeu ou confiança baixa, tentar OpenAI
+    if ((intent.intention === 'unknown' || intent.confidence < 0.4) && this.openaiNLP) {
+      console.log('🤖 Tentando OpenAI NLP fallback...');
+      const aiIntent = await this.openaiNLP.processMessage(message);
+      console.log('🤖 OpenAI NLP:', aiIntent.intention, 'confidence:', aiIntent.confidence);
+      if (aiIntent.intention !== 'unknown' && aiIntent.confidence > intent.confidence) {
+        intent = aiIntent;
+      }
+    }
 
     // Executar ação baseada na intenção
     switch (intent.intention) {

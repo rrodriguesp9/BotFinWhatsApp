@@ -89,19 +89,22 @@ class NaturalLanguageProcessor {
 
       // Receitas
       income: [
-        /(?:recebi|ganhei|entrou|depositei|salário|freela|pagamento)\s+(?:de\s+)?r?\$?\s*([\d.,]+)/i,
-        /(?:recebi|ganhei|entrou|depositei)\s+([\d.,]+)\s+(?:reais?|r\$)/i,
-        /(?:salário|freela|pagamento)\s+(?:de\s+)?([\d.,]+)/i
+        /(?:recebi|ganhei|entrou|depositei|salário|freela|pagamento)\s+(?:de\s+)?r?\$?\s*([\d.,]+\s*[kK]?)/i,
+        /(?:recebi|ganhei|entrou|depositei)\s+([\d.,]+\s*[kK]?)\s+(?:reais?|r\$)/i,
+        /(?:salário|freela|pagamento)\s+(?:de\s+)?([\d.,]+\s*[kK]?)/i,
+        /(?:receb[ei]|caiu|entrou)\s+(?:um\s+)?(?:pix|transferência)\s+(?:de\s+)?r?\$?\s*([\d.,]+\s*[kK]?)/i
       ],
 
       // Despesas (por último entre os financeiros)
       expense: [
-        /(?:gastei|paguei|comprei|compras?|conta|boleto)\s+(?:de\s+)?r?\$?\s*([\d.,]+)/i,
-        /(?:gastei|paguei|comprei)\s+([\d.,]+)\s+(?:reais?|r\$)/i,
-        /(?:conta|boleto)\s+(?:de\s+)?([\d.,]+)/i,
-        /(?:uber|99|taxi|ônibus|metrô|transporte)\s+([\d.,]+)/i,
-        /(?:almoço|jantar|café|lanche|restaurante)\s+([\d.,]+)/i,
-        /(?:mercado|supermercado|feira)\s+([\d.,]+)/i
+        /(?:gastei|paguei|comprei|compras?|conta|boleto)\s+(?:de\s+)?r?\$?\s*([\d.,]+\s*[kK]?)/i,
+        /(?:gastei|paguei|comprei)\s+([\d.,]+\s*[kK]?)\s+(?:reais?|r\$)/i,
+        /(?:fiz|mandei|enviei)\s+(?:um\s+)?(?:pix|transferência)\s+(?:de\s+)?r?\$?\s*([\d.,]+\s*[kK]?)/i,
+        /(?:transferi|pix)\s+(?:de\s+)?r?\$?\s*([\d.,]+\s*[kK]?)/i,
+        /(?:conta|boleto)\s+(?:de\s+)?([\d.,]+\s*[kK]?)/i,
+        /(?:uber|99|taxi|ônibus|metrô|transporte)\s+([\d.,]+\s*[kK]?)/i,
+        /(?:almoço|jantar|café|lanche|restaurante)\s+([\d.,]+\s*[kK]?)/i,
+        /(?:mercado|supermercado|feira)\s+([\d.,]+\s*[kK]?)/i
       ]
     };
 
@@ -232,8 +235,8 @@ class NaturalLanguageProcessor {
 
     // Detectar palavras-chave
     const keywords = {
-      income: ['recebi', 'ganhei', 'entrou', 'salário', 'salario', 'freela', 'pagamento'],
-      expense: ['gastei', 'paguei', 'comprei', 'conta', 'boleto', 'uber', 'mercado'],
+      income: ['recebi', 'ganhei', 'entrou', 'salário', 'salario', 'freela', 'pagamento', 'caiu'],
+      expense: ['gastei', 'paguei', 'comprei', 'conta', 'boleto', 'uber', 'mercado', 'pix', 'transferi', 'transferência', 'mandei', 'enviei'],
       balance: ['quanto', 'saldo', 'tenho', 'disponível', 'disponivel'],
       report: ['resumo', 'relatório', 'relatorio', 'extrato']
     };
@@ -260,18 +263,29 @@ class NaturalLanguageProcessor {
     };
   }
 
-  // Extrair valor monetário
+  // Extrair valor monetário (suporta K: 2k=2000, 1.5k=1500)
   extractAmount(text) {
     if (!text) return null;
-    
-    // Remover "R$", "reais", etc.
-    const cleanText = text.replace(/r?\$?\s*/gi, '').replace(/\s*(?:reais?|r\$)/gi, '');
-    
+
+    // Verificar se tem multiplicador K
+    const hasK = /[kK]\s*$/.test(text.trim());
+
+    // Remover "R$", "reais", "k", etc.
+    const cleanText = text
+      .replace(/r?\$?\s*/gi, '')
+      .replace(/\s*(?:reais?|r\$)/gi, '')
+      .replace(/\s*[kK]\s*$/g, '');
+
     // Converter vírgula para ponto
     const normalized = cleanText.replace(',', '.');
-    
-    const amount = parseFloat(normalized);
-    return isNaN(amount) ? null : amount;
+
+    let amount = parseFloat(normalized);
+    if (isNaN(amount)) return null;
+
+    // Aplicar multiplicador K
+    if (hasK) amount *= 1000;
+
+    return amount;
   }
 
   // Extrair categoria
@@ -299,6 +313,11 @@ class NaturalLanguageProcessor {
       'feira': 'mercado',
       'compras': 'mercado',
       
+      // Transferências
+      'pix': 'transferência',
+      'transferência': 'transferência',
+      'transferencia': 'transferência',
+
       // Contas
       'conta': 'contas',
       'boleto': 'contas',

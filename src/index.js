@@ -29,6 +29,23 @@ app.use("/api/", limiter);
 const botController = new BotController();
 const whatsappService = new WhatsAppService();
 
+// Cache de deduplicação de mensagens (evita reprocessar webhooks reenviados)
+const processedMessages = new Map();
+const MESSAGE_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
+function isMessageProcessed(messageId) {
+  if (processedMessages.has(messageId)) return true;
+  processedMessages.set(messageId, Date.now());
+  // Limpar cache antigo periodicamente
+  if (processedMessages.size > 500) {
+    const now = Date.now();
+    for (const [id, ts] of processedMessages) {
+      if (now - ts > MESSAGE_CACHE_TTL) processedMessages.delete(id);
+    }
+  }
+  return false;
+}
+
 // Middleware de logging
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
@@ -46,53 +63,65 @@ app.get("/health", (req, res) => {
 });
 
 // Rota para receber webhooks do WhatsApp
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", (req, res) => {
+  // IMPORTANTE: Responder 200 IMEDIATAMENTE para evitar retentativas do WhatsApp
+  res.status(200).json({ status: "OK" });
+
+  // Processar mensagens de forma assíncrona (após já ter respondido 200)
   try {
     const { object, entry } = req.body;
 
-    if (object === "whatsapp_business_account") {
-      for (const webhookEntry of entry) {
-        const { changes } = webhookEntry;
+    if (object !== "whatsapp_business_account" || !entry) return;
 
-        for (const change of changes) {
-          if (change.value && change.value.messages) {
-            for (const message of change.value.messages) {
-              const phoneNumber = message.from;
-              const messageType = message.type;
+    for (const webhookEntry of entry) {
+      const { changes } = webhookEntry;
+      if (!changes) continue;
 
-              console.log(
-                `📱 Nova mensagem recebida de ${phoneNumber}: ${messageType}`
-              );
+      for (const change of changes) {
+        if (!change.value || !change.value.messages) continue;
 
+        for (const message of change.value.messages) {
+          // Deduplicação: ignorar mensagens já processadas
+          if (isMessageProcessed(message.id)) {
+            console.log(`🔄 Mensagem ${message.id} já processada, ignorando`);
+            continue;
+          }
+
+          const phoneNumber = message.from;
+          const messageType = message.type;
+
+          console.log(
+            `📱 Nova mensagem recebida de ${phoneNumber}: ${messageType} (id: ${message.id})`
+          );
+
+          // Processar cada mensagem de forma assíncrona e independente
+          (async () => {
+            try {
               if (messageType === "text") {
                 await botController.processMessage(
                   phoneNumber,
                   message.text.body
                 );
               } else if (messageType === "image") {
-                const mediaUrl = message.image.id;
-                await botController.processMessage(phoneNumber, "", mediaUrl);
+                await botController.processMessage(phoneNumber, "", message.image.id);
               } else if (messageType === "document") {
-                const mediaUrl = message.document.id;
-                await botController.processMessage(phoneNumber, "", mediaUrl);
+                await botController.processMessage(phoneNumber, "", message.document.id);
               } else if (messageType === "audio") {
-                const mediaUrl = message.audio.id;
-                await botController.processAudioMessage(phoneNumber, mediaUrl);
+                await botController.processAudioMessage(phoneNumber, message.audio.id);
               } else {
                 console.log(
                   `⚠️ Tipo de mensagem não suportado: ${messageType}`
                 );
               }
+            } catch (err) {
+              console.error(`❌ Erro ao processar mensagem ${message.id}:`, err);
             }
-          }
+          })();
         }
       }
     }
-
-    res.status(200).json({ status: "OK" });
   } catch (error) {
-    console.error("❌ Erro no webhook:", error);
-    res.status(500).json({ error: "Erro interno do servidor" });
+    console.error("❌ Erro ao parsear webhook:", error);
   }
 });
 
