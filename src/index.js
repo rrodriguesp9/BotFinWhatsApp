@@ -332,16 +332,28 @@ app.get("/api/debug", async (req, res) => {
     try {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-      const testResult = await model.generateContent('Responda apenas: OK');
-      const testResponse = await testResult.response;
-      results.tests.geminiAPI = {
-        status: "OK",
-        model: 'gemini-2.0-flash',
-        response: testResponse.text().trim(),
-      };
+      // Tentar modelos em ordem de preferência
+      const models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+      let geminiOk = false;
+      for (const modelName of models) {
+        try {
+          const model = genAI.getGenerativeModel({ model: modelName });
+          const testResult = await model.generateContent('Responda apenas: OK');
+          const testResponse = await testResult.response;
+          results.tests.geminiAPI = {
+            status: "OK",
+            model: modelName,
+            response: testResponse.text().trim(),
+          };
+          geminiOk = true;
+          break;
+        } catch (modelErr) {
+          results.tests.geminiAPI = { status: "FAIL", model: modelName, error: modelErr.message.substring(0, 150) };
+          if (!modelErr.message.includes('429') && !modelErr.message.includes('quota')) break;
+        }
+      }
     } catch (err) {
-      results.tests.geminiAPI = { status: "FAIL", error: err.message };
+      results.tests.geminiAPI = { status: "FAIL", error: err.message.substring(0, 150) };
     }
   } else {
     results.tests.geminiAPI = { status: "SKIPPED", reason: "GEMINI_API_KEY não configurada" };

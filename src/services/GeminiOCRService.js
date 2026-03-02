@@ -3,12 +3,14 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 class GeminiOCRService {
   constructor() {
     this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    console.log('✅ GeminiOCRService inicializado (Gemini 2.0 Flash)');
+    // Lista de modelos para tentar em ordem (free tier varia por modelo)
+    this.modelNames = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+    console.log('✅ GeminiOCRService inicializado');
   }
 
   /**
    * Processa imagem de nota fiscal/recibo usando Gemini Vision.
+   * Tenta múltiplos modelos caso o free tier de um esteja indisponível.
    * Retorna no mesmo formato do OCRService para compatibilidade.
    */
   async processImage(imageBuffer) {
@@ -39,19 +41,41 @@ Regras:
 - Se não conseguir ler a imagem, retorne {"success": false, "error": "motivo"}
 - Categorias: mercado/supermercado→mercado, restaurante/lanche→alimentação, farmácia→saúde`;
 
-      const result = await this.model.generateContent([
-        prompt,
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: base64Image,
-          },
+      const imageData = {
+        inlineData: {
+          mimeType: mimeType,
+          data: base64Image,
         },
-      ]);
+      };
 
-      const response = await result.response;
-      const content = response.text().trim();
-      console.log('🤖 Gemini Vision resposta:', content.substring(0, 200));
+      // Tentar modelos em ordem até um funcionar
+      let content = null;
+      let lastError = null;
+
+      for (const modelName of this.modelNames) {
+        try {
+          console.log(`🔍 Tentando modelo: ${modelName}...`);
+          const model = this.genAI.getGenerativeModel({ model: modelName });
+          const result = await model.generateContent([prompt, imageData]);
+          const response = await result.response;
+          content = response.text().trim();
+          console.log(`🤖 Gemini (${modelName}) resposta:`, content.substring(0, 200));
+          break; // Funcionou, sair do loop
+        } catch (modelError) {
+          lastError = modelError;
+          console.log(`⚠️ Modelo ${modelName} falhou: ${modelError.message.substring(0, 100)}`);
+          // Se é erro 429 (quota), tentar próximo modelo
+          if (modelError.message.includes('429') || modelError.message.includes('quota')) {
+            continue;
+          }
+          // Outro tipo de erro, não adianta tentar outro modelo
+          throw modelError;
+        }
+      }
+
+      if (!content) {
+        throw lastError || new Error('Todos os modelos Gemini falharam');
+      }
 
       // Parsear JSON
       const jsonMatch = content.match(/\{[\s\S]*\}/);
