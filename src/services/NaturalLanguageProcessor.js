@@ -80,10 +80,10 @@ class NaturalLanguageProcessor {
 
       // Cofrinhos (antes de expense para "cofrinho viagem 2000" não confundir)
       savings: [
-        // Adicionar: "adicionar 100 ao cofrinho viagem" ou "guardar 2320 no cofrinho" (nome opcional)
-        /(?:adicionar|depositar|colocar|guardar)\s+([\d.,]+[kK]?)\s+(?:no|ao|pro)\s+(?:cofrinho)(?:\s+(.+))?/i,
-        // Retirar: "retirar 50 do cofrinho viagem" ou "retirar 50 do cofrinho" (nome opcional)
-        /(?:retirar|tirar|sacar|pegar)\s+([\d.,]+[kK]?)\s+(?:do|no)\s+(?:cofrinho)(?:\s+(.+))?/i,
+        // Adicionar/aplicar: "adicionar 100 ao cofrinho viagem" ou "aplicar 500 no cofrinho" (nome opcional)
+        /(?:adicionar|depositar|colocar|guardar|aplicar)\s+([\d.,]+[kK]?)\s+(?:no|ao|pro)\s+(?:cofrinho)(?:\s+(.+))?/i,
+        // Retirar/resgatar: "retirar 50 do cofrinho viagem" ou "resgatar 2k do cofrinho" (nome opcional)
+        /(?:retirar|tirar|sacar|pegar|resgatar)\s+([\d.,]+[kK]?)\s+(?:do|no)\s+(?:cofrinho)(?:\s+(.+))?/i,
         // Listar: "meus cofrinhos", "listar cofrinhos", "ver cofrinhos"
         /(?:meus?\s+)?cofrinhos$/i,
         /(?:listar|ver)\s+cofrinhos/i,
@@ -449,12 +449,12 @@ class NaturalLanguageProcessor {
 
   // Extrair ação de cofrinho com base no padrão que casou
   extractSavingsAction(match, text) {
-    // Adicionar/depositar: "adicionar 100 ao cofrinho viagem" ou "guardar 2320 no cofrinho"
-    if (/(?:adicionar|depositar|colocar|guardar)\s+[\d]/i.test(text)) {
+    // Adicionar/depositar/aplicar: "adicionar 100 ao cofrinho viagem" ou "aplicar 500 no cofrinho"
+    if (/(?:adicionar|depositar|colocar|guardar|aplicar)\s+[\d]/i.test(text)) {
       return { type: 'savings', action: 'add', amount: this.extractAmount(match[1]), name: match[2]?.trim() || null };
     }
-    // Retirar: "retirar 50 do cofrinho viagem" ou "retirar 50 do cofrinho"
-    if (/(?:retirar|tirar|sacar|pegar)\s+[\d]/i.test(text)) {
+    // Retirar/resgatar: "retirar 50 do cofrinho viagem" ou "resgatar 2k do cofrinho"
+    if (/(?:retirar|tirar|sacar|pegar|resgatar)\s+[\d]/i.test(text)) {
       return { type: 'savings', action: 'withdraw', amount: this.extractAmount(match[1]), name: match[2]?.trim() || null };
     }
     // Listar: "meus cofrinhos", "listar cofrinhos"
