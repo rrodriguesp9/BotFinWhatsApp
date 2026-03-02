@@ -76,50 +76,8 @@ app.post("/webhook", async (req, res) => {
                 const mediaUrl = message.document.id;
                 await botController.processMessage(phoneNumber, "", mediaUrl);
               } else if (messageType === "audio") {
-                console.log("🎤 Detectado áudio, processando com Whisper...");
-
-                try {
-                  const mediaUrl = message.audio.id;
-                  const audioBuffer = await whatsappService.downloadMedia(
-                    mediaUrl
-                  );
-                  const result =
-                    await botController.whisperService.processWhatsAppAudio(
-                      audioBuffer
-                    );
-
-                  if (result.success) {
-                    const confirmationMessage =
-                      botController.whisperService.generateConfirmationMessage(
-                        result.extracted
-                      );
-                    await whatsappService.sendMessage(
-                      phoneNumber,
-                      confirmationMessage
-                    );
-
-                    botController.sessions.set(phoneNumber, {
-                      type: "audio_confirmation",
-                      data: result.extracted,
-                      transcription: result.transcription,
-                      timestamp: Date.now(),
-                    });
-                  } else {
-                    await whatsappService.sendMessage(
-                      phoneNumber,
-                      "❌ Não consegui processar o áudio. Tente falar mais claramente."
-                    );
-                  }
-                } catch (audioError) {
-                  console.error(
-                    "❌ Erro no processamento de áudio:",
-                    audioError
-                  );
-                  await whatsappService.sendMessage(
-                    phoneNumber,
-                    "❌ Erro no processamento. Tente novamente."
-                  );
-                }
+                const mediaUrl = message.audio.id;
+                await botController.processAudioMessage(phoneNumber, mediaUrl);
               } else {
                 console.log(
                   `⚠️ Tipo de mensagem não suportado: ${messageType}`

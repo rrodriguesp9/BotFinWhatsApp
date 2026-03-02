@@ -5,14 +5,40 @@ class NaturalLanguageProcessor {
     // NLP baseado em regex otimizado para português brasileiro
   }
 
+  // Expandir abreviações comuns antes de processar
+  expandAbbreviations(text) {
+    const abbreviations = {
+      'gst': 'gastei', 'pag': 'pagamento', 'pgto': 'pagamento',
+      'rcb': 'recebi', 'rcbi': 'recebi', 'dep': 'depósito',
+      'qto': 'quanto', 'qnt': 'quanto', 'hj': 'hoje',
+      'sal': 'saldo', 'rel': 'relatório', 'obj': 'objetivo',
+      'merc': 'mercado', 'sup': 'supermercado', 'rest': 'restaurante',
+      'farm': 'farmácia', 'transp': 'transporte'
+    };
+
+    // Usar lookahead para não substituir dentro de palavras com acentos
+    const letterAfter = '[a-záàâãéèêíïóôõöúçñ]';
+    let expanded = text;
+    for (const [abbr, full] of Object.entries(abbreviations)) {
+      expanded = expanded.replace(new RegExp(`\\b${abbr}(?!${letterAfter})`, 'gi'), full);
+    }
+    return expanded;
+  }
+
   // Processar mensagem e extrair intenção
   processMessage(message) {
-    const text = message.toLowerCase().trim();
-    
+    const raw = message.toLowerCase().trim();
+    const text = this.expandAbbreviations(raw);
+
     // Padrões de regex para diferentes tipos de comandos
     // IMPORTANTE: a ordem define prioridade. Padrões mais específicos primeiro.
     const patterns = {
-      // Ajuda (primeiro para evitar conflitos com "como")
+      // Saudações (primeiro para respostas rápidas)
+      greeting: [
+        /^(oi|olá|ola|hey|eai|e\s*ai|fala|salve|bom\s*dia|boa\s*tarde|boa\s*noite|hello|hi|opa|eae|blz|beleza|tudo\s*bem)(\s|$|[!?,.])/i
+      ],
+
+      // Ajuda (antes dos demais para evitar conflitos com "como")
       help: [
         /(?:ajuda|help|comandos|como\s+(?:usar|funciona)|o\s+que\s+posso)/i
       ],
@@ -182,6 +208,13 @@ class NaturalLanguageProcessor {
           type: 'silent',
           days: parseInt(match[1])
         };
+        break;
+
+      case 'greeting':
+        extracted.extracted = {
+          type: 'greeting'
+        };
+        extracted.confidence = 0.95;
         break;
     }
 
@@ -394,7 +427,9 @@ class NaturalLanguageProcessor {
            `• "Pausar notificações por 3 dias"\n\n` +
            
            `📷 **OCR:**\n` +
-           `• Envie uma foto de recibo para extração automática`;
+           `• Envie uma foto de recibo para extração automática\n\n` +
+           `🎤 **Áudio:**\n` +
+           `• Envie um áudio dizendo o que gastou ou recebeu`;
   }
 }
 

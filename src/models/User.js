@@ -56,6 +56,15 @@ class User {
     return bcrypt.compare(pin, this.pinHash);
   }
 
+  // Atualizar nome
+  static async updateName(phoneNumber, name) {
+    const result = await query(
+      'UPDATE users SET name = $1, updated_at = NOW() WHERE phone_number = $2 RETURNING *',
+      [name, phoneNumber]
+    );
+    return result.rows[0];
+  }
+
   // Atualizar PIN
   async updatePin(newPin) {
     this.pinHash = await bcrypt.hash(newPin, 10);

@@ -6,13 +6,46 @@ const OCRService = require('../services/OCRService');
 const WhatsAppService = require('../services/WhatsAppService');
 const ReportService = require('../services/ReportService');
 
+// Whisper (áudio) — opcional, depende de OPENAI_API_KEY
+let WhisperService = null;
+try {
+  WhisperService = require('../services/WhisperService');
+} catch (e) {
+  console.log('⚠️ WhisperService não disponível:', e.message);
+}
+
+// Google Vision OCR — opcional, fallback quando Tesseract tem baixa confiança
+let GoogleVisionOCRService = null;
+try {
+  GoogleVisionOCRService = require('../services/GoogleVisionOCRService');
+} catch (e) {
+  console.log('⚠️ GoogleVisionOCRService não disponível:', e.message);
+}
+
 class BotController {
   constructor() {
     this.nlp = new NaturalLanguageProcessor();
     this.ocr = new OCRService();
     this.whatsapp = new WhatsAppService();
     this.report = new ReportService();
-    
+
+    // Whisper (áudio) — só instancia se OPENAI_API_KEY existir
+    if (WhisperService && process.env.OPENAI_API_KEY) {
+      this.whisperService = new WhisperService();
+      console.log('✅ WhisperService (áudio) ativado');
+    } else {
+      this.whisperService = null;
+      console.log('⚠️ WhisperService desativado (OPENAI_API_KEY não configurada)');
+    }
+
+    // Google Vision OCR — só instancia se credenciais existirem
+    if (GoogleVisionOCRService && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      this.googleVisionOCR = new GoogleVisionOCRService();
+      console.log('✅ GoogleVisionOCR (fallback) ativado');
+    } else {
+      this.googleVisionOCR = null;
+    }
+
     // Cache de sessões ativas
     this.sessions = new Map();
   }
@@ -26,7 +59,16 @@ class BotController {
       let user = await User.findByPhone(phoneNumber);
       if (!user) {
         user = await User.create(phoneNumber);
-        await this.sendWelcomeMessage(phoneNumber);
+        // Iniciar fluxo de onboarding
+        this.sessions.set(phoneNumber, {
+          type: 'onboarding',
+          step: 'awaiting_name',
+          timestamp: Date.now()
+        });
+        await this.sendMessage(phoneNumber,
+          `🤖 *Bem-vindo ao AgendaCash!*\n\n` +
+          `Sou seu assistente financeiro via WhatsApp.\n\n` +
+          `Para começar, qual é o seu nome?`);
         return;
       }
 
@@ -53,10 +95,25 @@ class BotController {
   // Processar mensagem de texto
   async processTextMessage(user, message) {
     try {
-      // Verificar se há sessão pendente de confirmação (ex: OCR)
+      // Expirar sessões antigas (5 minutos)
       const session = this.sessions.get(user.phoneNumber);
-      if (session && session.type === 'ocr_confirmation') {
-        return await this.handleOcrConfirmation(user, message, session);
+      if (session && (Date.now() - session.timestamp) > 5 * 60 * 1000) {
+        this.sessions.delete(user.phoneNumber);
+      }
+
+      // Verificar sessões pendentes em ordem de prioridade
+      const currentSession = this.sessions.get(user.phoneNumber);
+
+      if (currentSession && currentSession.type === 'onboarding') {
+        return await this.handleOnboarding(user, message, currentSession);
+      }
+
+      if (currentSession && currentSession.type === 'ocr_confirmation') {
+        return await this.handleOcrConfirmation(user, message, currentSession);
+      }
+
+      if (currentSession && currentSession.type === 'audio_confirmation') {
+        return await this.handleAudioConfirmation(user, message, currentSession);
       }
 
       return await this.processTextMessageInternal(user, message);
@@ -97,6 +154,9 @@ class BotController {
       case 'export':
         return await this.handleExport(user, intent.extracted);
 
+      case 'greeting':
+        return await this.handleGreeting(user);
+
       case 'help':
         return await this.sendHelpMessage(user.phoneNumber);
 
@@ -125,9 +185,23 @@ class BotController {
         return;
       }
       
-      // Processar OCR
-      const ocrResult = await this.ocr.processImage(imageBuffer);
-      
+      // Processar OCR (Tesseract primário)
+      let ocrResult = await this.ocr.processImage(imageBuffer);
+
+      // Google Vision fallback se confiança baixa
+      if (ocrResult.success && ocrResult.confidence < 0.6 && this.googleVisionOCR) {
+        console.log('📷 Tesseract com baixa confiança, tentando Google Vision...');
+        try {
+          const visionResult = await this.googleVisionOCR.processImage(imageBuffer);
+          if (visionResult.success && visionResult.confidence > ocrResult.confidence) {
+            ocrResult = visionResult;
+            console.log('✅ Google Vision retornou melhor resultado');
+          }
+        } catch (visionError) {
+          console.error('⚠️ Google Vision falhou, usando resultado do Tesseract:', visionError.message);
+        }
+      }
+
       if (!ocrResult.success) {
         await this.sendMessage(user.phoneNumber,
           `❌ **Erro no processamento da imagem**\n\n` +
@@ -448,26 +522,153 @@ class BotController {
     }
   }
 
+  // Lidar com fluxo de onboarding (nome + PIN)
+  async handleOnboarding(user, message, session) {
+    const text = message.trim();
+
+    if (session.step === 'awaiting_name') {
+      // Validar nome (mínimo 2 caracteres, sem números)
+      if (text.length < 2 || /\d/.test(text)) {
+        await this.sendMessage(user.phoneNumber,
+          'Por favor, digite um nome válido (mínimo 2 letras):');
+        return;
+      }
+
+      const name = text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+      await User.updateName(user.phoneNumber, name);
+
+      this.sessions.set(user.phoneNumber, {
+        type: 'onboarding',
+        step: 'awaiting_pin',
+        name: name,
+        timestamp: Date.now()
+      });
+
+      await this.sendMessage(user.phoneNumber,
+        `Prazer, *${name}*! 😊\n\n` +
+        `Agora crie um *PIN de 4 dígitos* para proteger suas informações:`);
+      return;
+    }
+
+    if (session.step === 'awaiting_pin') {
+      if (!/^\d{4}$/.test(text)) {
+        await this.sendMessage(user.phoneNumber,
+          'O PIN deve ter exatamente *4 dígitos numéricos*.\nExemplo: 1234');
+        return;
+      }
+
+      // Recarregar o usuário do banco para ter o objeto atualizado
+      const updatedUser = await User.findByPhone(user.phoneNumber);
+      await updatedUser.updatePin(text);
+
+      this.sessions.delete(user.phoneNumber);
+
+      const name = session.name || 'amigo';
+      await this.sendMessage(user.phoneNumber,
+        `✅ *Tudo pronto, ${name}!*\n\n` +
+        `Seu AgendaCash está configurado. Veja o que posso fazer:\n\n` +
+        `💰 "gastei 50 no mercado" — registrar despesa\n` +
+        `💵 "recebi 3000 salário" — registrar receita\n` +
+        `📊 "saldo" — ver saldo atual\n` +
+        `📋 "relatório" — ver relatório\n` +
+        `📷 Envie uma *foto de recibo* para extração automática\n` +
+        `🎤 Envie um *áudio* dizendo o que gastou\n\n` +
+        `Digite *ajuda* para ver todos os comandos.`);
+      return;
+    }
+  }
+
+  // Lidar com saudação
+  async handleGreeting(user) {
+    const name = user.name ? `, ${user.name}` : '';
+    await this.sendMessage(user.phoneNumber,
+      `Olá${name}! Como posso te ajudar? 😊\n\n` +
+      `Exemplos rápidos:\n` +
+      `💰 "gastei 50 no mercado"\n` +
+      `💵 "recebi 3000 salário"\n` +
+      `📊 "saldo"\n\n` +
+      `Digite *ajuda* para ver todos os comandos.`);
+  }
+
+  // Lidar com confirmação de áudio (sim/não)
+  async handleAudioConfirmation(user, message, session) {
+    const response = message.toLowerCase().trim();
+    this.sessions.delete(user.phoneNumber);
+
+    if (response === 'sim' || response === 's') {
+      const data = session.data;
+      await this.handleTransaction(user, {
+        type: data.type || 'expense',
+        amount: data.amount,
+        category: data.category || 'outros',
+        description: data.description || 'Transação via áudio',
+        date: data.date || new Date(),
+        source: 'audio'
+      });
+    } else if (response === 'não' || response === 'nao' || response === 'n') {
+      await this.sendMessage(user.phoneNumber,
+        '❌ *Transação cancelada.*\n\n' +
+        'Você pode digitar o valor manualmente.\n' +
+        'Exemplo: "gastei 50 no mercado"');
+    } else {
+      // Não era sim/não - reprocessar como mensagem normal
+      return await this.processTextMessageInternal(user, message);
+    }
+  }
+
+  // Processar mensagem de áudio
+  async processAudioMessage(phoneNumber, audioMediaId) {
+    try {
+      // Verificar se Whisper está disponível
+      if (!this.whisperService) {
+        await this.sendMessage(phoneNumber,
+          '⚠️ Processamento de áudio não disponível no momento.\n' +
+          'Por favor, envie sua mensagem como texto.\n\n' +
+          'Exemplo: "gastei 50 no mercado"');
+        return;
+      }
+
+      console.log('🎤 Processando áudio com Whisper...');
+
+      // Baixar áudio
+      const audioBuffer = await this.whatsapp.downloadMedia(audioMediaId);
+
+      // Processar com Whisper
+      const result = await this.whisperService.processWhatsAppAudio(audioBuffer);
+
+      if (result.success) {
+        const confirmationMessage = this.whisperService.generateConfirmationMessage(result.extracted);
+        await this.sendMessage(phoneNumber, confirmationMessage);
+
+        // Criar sessão de confirmação
+        this.sessions.set(phoneNumber, {
+          type: 'audio_confirmation',
+          data: result.extracted,
+          transcription: result.transcription,
+          timestamp: Date.now()
+        });
+      } else {
+        await this.sendMessage(phoneNumber,
+          '❌ Não consegui processar o áudio.\n' +
+          'Tente falar mais claramente ou envie como texto.');
+      }
+    } catch (error) {
+      console.error('❌ Erro no processamento de áudio:', error);
+      await this.sendMessage(phoneNumber,
+        '❌ Erro ao processar áudio. Tente novamente.');
+    }
+  }
+
   // Lidar com comando desconhecido
   async handleUnknownCommand(user, message) {
     await this.sendMessage(user.phoneNumber,
-      `❓ **Comando não reconhecido**\n\n` +
-      `Não entendi: "${message}"\n\n` +
-      `Digite "ajuda" para ver todos os comandos disponíveis.`);
-  }
-
-  // Enviar mensagem de boas-vindas
-  async sendWelcomeMessage(phoneNumber) {
-    await this.sendMessage(phoneNumber,
-      `🤖 **BEM-VINDO AO BOT FINANCEIRO!**\n\n` +
-      `💰 **Controle suas finanças via WhatsApp**\n\n` +
-      `**Como usar:**\n` +
-      `• "Gastei 50 no Uber" - Registra despesa\n` +
-      `• "Recebi 2500 do salário" - Registra receita\n` +
-      `• "Quanto tenho agora?" - Consulta saldo\n` +
-      `• "Resumo da semana" - Relatório\n\n` +
-      `📷 **Envie uma foto de recibo** para extração automática!\n\n` +
-      `Digite "ajuda" para ver todos os comandos.`);
+      `❓ Não entendi o comando.\n\n` +
+      `Exemplos do que posso fazer:\n` +
+      `💰 "gastei 50 no mercado" — registrar despesa\n` +
+      `💵 "recebi 3000 salário" — registrar receita\n` +
+      `📊 "saldo" — ver saldo atual\n` +
+      `📋 "relatório" — ver relatório\n\n` +
+      `Digite *ajuda* para ver todos os comandos.`);
   }
 
   // Enviar mensagem de ajuda
