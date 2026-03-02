@@ -28,7 +28,9 @@ class NaturalLanguageProcessor {
   // Processar mensagem e extrair intenção
   processMessage(message) {
     const raw = message.toLowerCase().trim();
-    const text = this.expandAbbreviations(raw);
+    const expanded = this.expandAbbreviations(raw);
+    // Normalizar "viagem, 5000" → "viagem 5000" (vírgula entre texto e número)
+    const text = expanded.replace(/,\s+(?=\d)/g, ' ');
 
     // Padrões de regex para diferentes tipos de comandos
     // IMPORTANTE: a ordem define prioridade. Padrões mais específicos primeiro.
@@ -70,10 +72,10 @@ class NaturalLanguageProcessor {
 
       // Cofrinhos (antes de expense para "cofrinho viagem 2000" não confundir)
       savings: [
-        // Adicionar: "adicionar 100 ao cofrinho viagem", "depositar 50 no cofrinho ferias"
-        /(?:adicionar|depositar|colocar|guardar)\s+([\d.,]+[kK]?)\s+(?:no|ao|pro)\s+(?:cofrinho)\s+(.+)/i,
-        // Retirar: "retirar 50 do cofrinho viagem", "tirar 100 do cofrinho ferias"
-        /(?:retirar|tirar|sacar|pegar)\s+([\d.,]+[kK]?)\s+(?:do|no)\s+(?:cofrinho)\s+(.+)/i,
+        // Adicionar: "adicionar 100 ao cofrinho viagem" ou "guardar 2320 no cofrinho" (nome opcional)
+        /(?:adicionar|depositar|colocar|guardar)\s+([\d.,]+[kK]?)\s+(?:no|ao|pro)\s+(?:cofrinho)(?:\s+(.+))?/i,
+        // Retirar: "retirar 50 do cofrinho viagem" ou "retirar 50 do cofrinho" (nome opcional)
+        /(?:retirar|tirar|sacar|pegar)\s+([\d.,]+[kK]?)\s+(?:do|no)\s+(?:cofrinho)(?:\s+(.+))?/i,
         // Listar: "meus cofrinhos", "listar cofrinhos", "ver cofrinhos"
         /(?:meus?\s+)?cofrinhos$/i,
         /(?:listar|ver)\s+cofrinhos/i,
@@ -81,7 +83,9 @@ class NaturalLanguageProcessor {
         /(?:ver|status|detalhe)\s+(?:do\s+)?cofrinho\s+(.+)/i,
         // Criar: "cofrinho viagem 2000", "criar cofrinho ferias 5000"
         /(?:cofrinho|objetivo|guardar\s+para|poupar\s+para)\s+(?:para\s+)?([a-záàâãéèêíïóôõöúçñ\s]+?)\s+([\d.,]+[kK]?)/i,
-        /(?:criar\s+)?(?:cofrinho|objetivo)\s+([a-záàâãéèêíïóôõöúçñ\s]+?)\s+([\d.,]+[kK]?)/i
+        /(?:criar\s+)?(?:cofrinho|objetivo)\s+([a-záàâãéèêíïóôõöúçñ\s]+?)\s+([\d.,]+[kK]?)/i,
+        // Criar sem params: "criar cofrinho", "cofrinho" (mostra ajuda)
+        /^(?:criar\s+)?cofrinho$/i
       ],
 
       // Calendário / Agenda Google
@@ -424,13 +428,13 @@ class NaturalLanguageProcessor {
 
   // Extrair ação de cofrinho com base no padrão que casou
   extractSavingsAction(match, text) {
-    // Adicionar/depositar: "adicionar 100 ao cofrinho viagem"
+    // Adicionar/depositar: "adicionar 100 ao cofrinho viagem" ou "guardar 2320 no cofrinho"
     if (/(?:adicionar|depositar|colocar|guardar)\s+[\d]/i.test(text)) {
-      return { type: 'savings', action: 'add', amount: this.extractAmount(match[1]), name: match[2]?.trim() };
+      return { type: 'savings', action: 'add', amount: this.extractAmount(match[1]), name: match[2]?.trim() || null };
     }
-    // Retirar: "retirar 50 do cofrinho viagem"
+    // Retirar: "retirar 50 do cofrinho viagem" ou "retirar 50 do cofrinho"
     if (/(?:retirar|tirar|sacar|pegar)\s+[\d]/i.test(text)) {
-      return { type: 'savings', action: 'withdraw', amount: this.extractAmount(match[1]), name: match[2]?.trim() };
+      return { type: 'savings', action: 'withdraw', amount: this.extractAmount(match[1]), name: match[2]?.trim() || null };
     }
     // Listar: "meus cofrinhos", "listar cofrinhos"
     if (/(?:meus?\s+)?cofrinhos$|(?:listar|ver)\s+cofrinhos/i.test(text)) {
@@ -439,6 +443,10 @@ class NaturalLanguageProcessor {
     // Ver específico: "ver cofrinho viagem"
     if (/(?:ver|status|detalhe)\s+(?:do\s+)?cofrinho\s+/i.test(text)) {
       return { type: 'savings', action: 'view', name: match[1]?.trim() };
+    }
+    // Criar sem params: "criar cofrinho"
+    if (/^(?:criar\s+)?cofrinho$/i.test(text)) {
+      return { type: 'savings', action: 'create_help' };
     }
     // Criar (padrão): "cofrinho viagem 2000"
     return { type: 'savings', action: 'create', name: match[1]?.trim(), target: this.extractAmount(match[2]) };

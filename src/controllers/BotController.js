@@ -580,6 +580,8 @@ class BotController {
       switch (action) {
         case 'create':
           return await this.handleCofrinhoCreate(user, savingsData);
+        case 'create_help':
+          return await this.handleCofrinhoCreateHelp(user);
         case 'add':
           return await this.handleCofrinhoAdd(user, savingsData);
         case 'withdraw':
@@ -598,7 +600,20 @@ class BotController {
     }
   }
 
+  async handleCofrinhoCreateHelp(user) {
+    await this.sendMessage(user.phoneNumber,
+      `💡 *Como criar um cofrinho:*\n\n` +
+      `Informe o nome e a meta:\n` +
+      `• "cofrinho viagem 2000"\n` +
+      `• "cofrinho emergência 5k"\n` +
+      `• "cofrinho carro 50000"`);
+  }
+
   async handleCofrinhoCreate(user, data) {
+    if (!data.name || !data.target || data.target <= 0) {
+      return await this.handleCofrinhoCreateHelp(user);
+    }
+
     const cofrinho = await Cofrinho.create({
       userId: user.id,
       nome: data.name,
@@ -617,12 +632,34 @@ class BotController {
   }
 
   async handleCofrinhoAdd(user, data) {
-    const cofrinho = await Cofrinho.findByName(user.id, data.name);
-    if (!cofrinho) {
-      await this.sendMessage(user.phoneNumber,
-        `❌ Cofrinho "${data.name}" não encontrado.\n` +
-        `Digite "meus cofrinhos" para ver seus cofrinhos.`);
-      return;
+    let cofrinho;
+    if (!data.name) {
+      // Sem nome: se tem 1 cofrinho usa automaticamente, senão pede especificação
+      const cofrinhos = await Cofrinho.findByUser(user.id);
+      if (cofrinhos.length === 0) {
+        await this.sendMessage(user.phoneNumber,
+          `❌ Você não tem cofrinhos.\n\nPara criar: "cofrinho viagem 2000"`);
+        return;
+      }
+      if (cofrinhos.length === 1) {
+        cofrinho = cofrinhos[0];
+      } else {
+        let msg = `❓ Em qual cofrinho deseja depositar?\n\n`;
+        cofrinhos.forEach((c, i) => {
+          msg += `${i + 1}. *${c.nome}* (${Cofrinho.formatarMoeda(c.valorAtual)} / ${Cofrinho.formatarMoeda(c.meta)})\n`;
+        });
+        msg += `\nEspecifique: "adicionar ${data.amount} ao cofrinho <nome>"`;
+        await this.sendMessage(user.phoneNumber, msg);
+        return;
+      }
+    } else {
+      cofrinho = await Cofrinho.findByName(user.id, data.name);
+      if (!cofrinho) {
+        await this.sendMessage(user.phoneNumber,
+          `❌ Cofrinho "${data.name}" não encontrado.\n` +
+          `Digite "meus cofrinhos" para ver seus cofrinhos.`);
+        return;
+      }
     }
 
     await cofrinho.adicionarValor(data.amount, 'Depósito via chat');
@@ -645,12 +682,33 @@ class BotController {
   }
 
   async handleCofrinhoWithdraw(user, data) {
-    const cofrinho = await Cofrinho.findByName(user.id, data.name);
-    if (!cofrinho) {
-      await this.sendMessage(user.phoneNumber,
-        `❌ Cofrinho "${data.name}" não encontrado.\n` +
-        `Digite "meus cofrinhos" para ver seus cofrinhos.`);
-      return;
+    let cofrinho;
+    if (!data.name) {
+      const cofrinhos = await Cofrinho.findByUser(user.id);
+      if (cofrinhos.length === 0) {
+        await this.sendMessage(user.phoneNumber,
+          `❌ Você não tem cofrinhos.\n\nPara criar: "cofrinho viagem 2000"`);
+        return;
+      }
+      if (cofrinhos.length === 1) {
+        cofrinho = cofrinhos[0];
+      } else {
+        let msg = `❓ De qual cofrinho deseja retirar?\n\n`;
+        cofrinhos.forEach((c, i) => {
+          msg += `${i + 1}. *${c.nome}* (${Cofrinho.formatarMoeda(c.valorAtual)})\n`;
+        });
+        msg += `\nEspecifique: "retirar ${data.amount} do cofrinho <nome>"`;
+        await this.sendMessage(user.phoneNumber, msg);
+        return;
+      }
+    } else {
+      cofrinho = await Cofrinho.findByName(user.id, data.name);
+      if (!cofrinho) {
+        await this.sendMessage(user.phoneNumber,
+          `❌ Cofrinho "${data.name}" não encontrado.\n` +
+          `Digite "meus cofrinhos" para ver seus cofrinhos.`);
+        return;
+      }
     }
 
     await cofrinho.retirarValor(data.amount, 'Retirada via chat');
