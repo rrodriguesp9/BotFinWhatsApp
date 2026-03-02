@@ -4,12 +4,13 @@ class GeminiOCRService {
   constructor() {
     this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     // Lista de modelos para tentar em ordem (free tier varia por modelo/conta)
+    // Modelos em ordem de preferência (série 2.5 = free tier atual)
     this.modelNames = [
-      'gemini-2.0-flash-lite',
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
       'gemini-2.0-flash',
       'gemini-1.5-flash-latest',
-      'gemini-1.5-flash-002',
-      'gemini-1.5-pro-latest',
     ];
     console.log('✅ GeminiOCRService inicializado');
   }
