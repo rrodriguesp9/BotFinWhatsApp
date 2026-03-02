@@ -30,6 +30,14 @@ try {
   console.log('⚠️ OpenAINLPService não disponível:', e.message);
 }
 
+// OpenAI OCR — leitura de notas fiscais via GPT Vision
+let OpenAIOCRService = null;
+try {
+  OpenAIOCRService = require('../services/OpenAIOCRService');
+} catch (e) {
+  console.log('⚠️ OpenAIOCRService não disponível:', e.message);
+}
+
 class BotController {
   constructor() {
     this.nlp = new NaturalLanguageProcessor();
@@ -60,6 +68,14 @@ class BotController {
       console.log('✅ OpenAI NLP (fallback inteligente) ativado');
     } else {
       this.openaiNLP = null;
+    }
+
+    // OpenAI OCR — leitura de notas fiscais via GPT Vision (primário quando disponível)
+    if (OpenAIOCRService && process.env.OPENAI_API_KEY) {
+      this.openaiOCR = new OpenAIOCRService();
+      console.log('✅ OpenAI Vision OCR (leitura de notas) ativado');
+    } else {
+      this.openaiOCR = null;
     }
 
     // Cache de sessões ativas
@@ -198,60 +214,88 @@ class BotController {
   async processMediaMessage(user, mediaUrl) {
     try {
       console.log('📷 Processando mídia...');
-      
+
       // Baixar imagem
       const imageBuffer = await this.whatsapp.downloadMedia(mediaUrl);
-      
-      // Validar imagem
-      const validation = this.ocr.validateReceiptImage(imageBuffer);
-      if (!validation.valid) {
-        await this.sendMessage(user.phoneNumber, 
-          `❌ **Erro:** ${validation.reason}\n\n` +
-          `Por favor, envie uma imagem mais clara do recibo.`);
+
+      // Validar tamanho básico
+      if (imageBuffer.length < 1024) {
+        await this.sendMessage(user.phoneNumber, '❌ Imagem muito pequena. Envie uma foto mais clara.');
         return;
       }
-      
-      // Processar OCR (Tesseract primário)
-      let ocrResult = await this.ocr.processImage(imageBuffer);
+      if (imageBuffer.length > 20 * 1024 * 1024) {
+        await this.sendMessage(user.phoneNumber, '❌ Imagem muito grande (máx 20MB).');
+        return;
+      }
 
-      // Google Vision fallback se confiança baixa
-      if (ocrResult.success && ocrResult.confidence < 0.6 && this.googleVisionOCR) {
-        console.log('📷 Tesseract com baixa confiança, tentando Google Vision...');
-        try {
-          const visionResult = await this.googleVisionOCR.processImage(imageBuffer);
-          if (visionResult.success && visionResult.confidence > ocrResult.confidence) {
-            ocrResult = visionResult;
-            console.log('✅ Google Vision retornou melhor resultado');
-          }
-        } catch (visionError) {
-          console.error('⚠️ Google Vision falhou, usando resultado do Tesseract:', visionError.message);
+      let ocrResult = null;
+      let confirmationMessage = null;
+
+      // Estratégia 1: OpenAI Vision (primário — mais preciso, como ChatGPT)
+      if (this.openaiOCR) {
+        console.log('🤖 Usando OpenAI Vision para ler nota fiscal...');
+        ocrResult = await this.openaiOCR.processImage(imageBuffer);
+
+        if (ocrResult.success) {
+          confirmationMessage = this.openaiOCR.generateConfirmationMessage(ocrResult.extracted);
+        } else {
+          console.log('⚠️ OpenAI Vision falhou:', ocrResult.error);
         }
       }
 
-      if (!ocrResult.success) {
+      // Estratégia 2: Tesseract (fallback — gratuito, sem API)
+      if (!ocrResult || !ocrResult.success) {
+        console.log('📷 Tentando Tesseract OCR...');
+        try {
+          // Timeout de 30 segundos para evitar travamento
+          ocrResult = await Promise.race([
+            this.ocr.processImage(imageBuffer),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Tesseract timeout (30s)')), 30000)
+            )
+          ]);
+
+          if (ocrResult.success) {
+            confirmationMessage = this.ocr.generateConfirmationMessage(ocrResult.extracted);
+          }
+        } catch (tesseractError) {
+          console.error('⚠️ Tesseract falhou:', tesseractError.message);
+        }
+      }
+
+      // Nenhum OCR funcionou
+      if (!ocrResult || !ocrResult.success) {
         await this.sendMessage(user.phoneNumber,
-          `❌ **Erro no processamento da imagem**\n\n` +
-          `Não consegui ler o recibo. Por favor:\n` +
-          `• Verifique se a imagem está clara\n` +
-          `• Tente enviar novamente\n` +
-          `• Ou digite o valor manualmente`);
+          '❌ Não consegui ler a nota fiscal.\n\n' +
+          'Tente:\n' +
+          '• Enviar uma foto mais clara e bem iluminada\n' +
+          '• Ou digitar o valor manualmente: "gastei 50 no mercado"');
         return;
       }
-      
-      // Gerar mensagem de confirmação
-      const confirmationMessage = this.ocr.generateConfirmationMessage(ocrResult.extracted);
+
+      // Verificar se extraiu valor
+      if (!ocrResult.extracted || !ocrResult.extracted.amount) {
+        await this.sendMessage(user.phoneNumber,
+          '⚠️ Li a imagem mas não encontrei o valor total.\n\n' +
+          'Por favor, digite o valor manualmente:\n' +
+          'Exemplo: "gastei 50 no mercado"');
+        return;
+      }
+
+      // Enviar confirmação
       await this.sendMessage(user.phoneNumber, confirmationMessage);
-      
+
       // Salvar dados temporários para confirmação
       this.sessions.set(user.phoneNumber, {
         type: 'ocr_confirmation',
         data: ocrResult.extracted,
         timestamp: Date.now()
       });
-      
+
     } catch (error) {
       console.error('❌ Erro ao processar mídia:', error);
-      await this.sendErrorMessage(user.phoneNumber);
+      await this.sendMessage(user.phoneNumber,
+        '❌ Erro ao processar imagem. Tente novamente ou digite o valor manualmente.');
     }
   }
 
