@@ -233,6 +233,9 @@ class BotController {
       case 'expense':
         return await this.handleTransaction(user, intent.extracted);
 
+      case 'category_query':
+        return await this.handleCategoryQuery(user, intent.extracted);
+
       case 'balance':
         return await this.handleBalanceQuery(user);
 
@@ -544,6 +547,54 @@ class BotController {
     }
   }
 
+  // Lidar com consulta por categoria (itens detalhados)
+  async handleCategoryQuery(user, queryData) {
+    try {
+      const category = queryData.category || 'outros';
+      const period = queryData.period || 'month';
+      const startDate = Transaction.getPeriodStartDate(period);
+
+      const transactions = await Transaction.findByUser(user.id, {
+        startDate,
+        category
+      });
+
+      if (transactions.length === 0) {
+        await this.sendMessage(user.phoneNumber,
+          `📂 *Gastos em "${queryData.rawCategory || category}"*\n\n` +
+          `Nenhuma transação encontrada neste período.`);
+        return;
+      }
+
+      const total = transactions.reduce((sum, t) => sum + t.amount, 0);
+      const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+      let message = `📂 *Gastos em "${category}"*\n\n`;
+      message += `💰 *Total:* ${fmt(total)} (${transactions.length} transações)\n\n`;
+      message += `📋 *Detalhes:*\n`;
+
+      // Mostrar até 15 transações mais recentes
+      const recent = transactions.slice(0, 15);
+      recent.forEach((t, i) => {
+        const date = new Date(t.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        const desc = t.description && t.description !== 'Transação' ? t.description : '-';
+        message += `${i + 1}. ${date} — ${fmt(t.amount)} — _${desc}_\n`;
+      });
+
+      if (transactions.length > 15) {
+        message += `\n... e mais ${transactions.length - 15} transações.`;
+      }
+
+      message += `\n\n💡 "exporte em PDF" para ver o relatório completo.`;
+
+      await this.sendMessage(user.phoneNumber, message);
+
+    } catch (error) {
+      console.error('❌ Erro na consulta por categoria:', error);
+      await this.sendErrorMessage(user.phoneNumber);
+    }
+  }
+
   // Lidar com criação de meta
   async handleGoalCreation(user, goalData) {
     try {
@@ -835,8 +886,12 @@ class BotController {
   async handleCalendar(user, calendarData) {
     if (!this.calendar) {
       await this.sendMessage(user.phoneNumber,
-        `⚠️ Google Calendar não está configurado.\n` +
-        `Solicite ao administrador que configure as credenciais do Google.`);
+        `⚠️ *Google Calendar não disponível*\n\n` +
+        `As credenciais do Google não estão configuradas no servidor.\n` +
+        `Verifique as variáveis de ambiente:\n` +
+        `• GOOGLE_CLIENT_ID\n` +
+        `• GOOGLE_CLIENT_SECRET\n` +
+        `• GOOGLE_REDIRECT_URI`);
       return;
     }
 
@@ -846,13 +901,33 @@ class BotController {
         await this.sendMessage(user.phoneNumber,
           `✅ *Calendário desconectado!*\n\n` +
           `Sua conta Google foi desvinculada.`);
+      } else if (calendarData.action === 'status') {
+        const isConnected = !!user.googleTokens;
+        if (isConnected) {
+          await this.sendMessage(user.phoneNumber,
+            `📅 *Google Calendar*\n\n` +
+            `✅ *Status:* Conectado\n\n` +
+            `Lembretes automáticos estão ativos para:\n` +
+            `• Metas de gastos (80% e 100%)\n` +
+            `• Cofrinhos (80% e meta atingida)\n\n` +
+            `• "desconectar calendário" — para remover`);
+        } else {
+          await this.sendMessage(user.phoneNumber,
+            `📅 *Google Calendar*\n\n` +
+            `❌ *Status:* Não conectado\n\n` +
+            `Conecte para receber lembretes automáticos no seu calendário!\n\n` +
+            `• "conectar calendário" — para vincular`);
+        }
       } else {
         // connect — gerar URL OAuth
         const authUrl = this.calendar.generateAuthUrl(user.id);
         await this.sendMessage(user.phoneNumber,
           `📅 *Conectar Google Calendar*\n\n` +
           `Clique no link abaixo para autorizar:\n${authUrl}\n\n` +
-          `Após autorizar, seus compromissos serão sincronizados automaticamente.`);
+          `Após autorizar, você receberá lembretes automáticos:\n` +
+          `• Alertas de metas (80% e estourada)\n` +
+          `• Alertas de cofrinhos\n\n` +
+          `⚠️ O link deve ser aberto no navegador do celular.`);
       }
     } catch (error) {
       console.error('❌ Erro no calendário:', error);
@@ -1120,7 +1195,12 @@ class BotController {
       await this.sendMessage(user.phoneNumber, '⏳ Gerando relatório...');
 
       const reportBuffer = await this.report.generateReport(user.id, format, period);
-      await this.whatsapp.sendMedia(user.phoneNumber, reportBuffer, format);
+
+      // Mapear formato para tipo de mídia e filename corretos para WhatsApp API
+      const fileExtMap = { pdf: 'relatorio.pdf', csv: 'relatorio.csv', excel: 'relatorio.xlsx' };
+      const contentTypeMap = { pdf: 'application/pdf', csv: 'text/csv', excel: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+      const filename = fileExtMap[format] || 'relatorio.pdf';
+      await this.whatsapp.sendMedia(user.phoneNumber, reportBuffer, 'document', filename);
 
       await this.sendMessage(user.phoneNumber,
         `📤 *Relatório enviado!*\n\n` +

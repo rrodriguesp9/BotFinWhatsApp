@@ -53,7 +53,8 @@ class WhatsAppService {
         to: phoneNumber,
         type: mediaType,
         [mediaType]: {
-          id: mediaId
+          id: mediaId,
+          ...(mediaType === 'document' && filename ? { filename } : {})
         }
       };
 
@@ -75,7 +76,7 @@ class WhatsAppService {
       formData.append('messaging_product', 'whatsapp');
       formData.append('file', mediaBuffer, {
         filename: filename,
-        contentType: this.getContentType(mediaType)
+        contentType: this.getContentType(mediaType, filename)
       });
 
       const response = await axios.post(
@@ -220,7 +221,25 @@ class WhatsAppService {
   }
 
   // Obter tipo de conteúdo baseado no tipo de mídia
-  getContentType(mediaType) {
+  getContentType(mediaType, filename) {
+    // Se temos filename, detectar pelo extensão
+    if (filename) {
+      const ext = filename.split('.').pop().toLowerCase();
+      const extMap = {
+        'pdf': 'application/pdf',
+        'csv': 'text/csv',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'xls': 'application/vnd.ms-excel',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'mp3': 'audio/mp3',
+        'ogg': 'audio/ogg',
+        'mp4': 'video/mp4'
+      };
+      if (extMap[ext]) return extMap[ext];
+    }
+
     const contentTypes = {
       'image': 'image/jpeg',
       'document': 'application/pdf',

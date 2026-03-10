@@ -78,45 +78,99 @@ class WhisperService {
     }
   }
 
+  // Remover prefixos de nome/apelido do bot antes de parsear
+  stripBotPrefix(text) {
+    // Remove "Agenda Cash," ou qualquer nome seguido de vírgula/ponto no início
+    return text
+      .replace(/^(?:agenda\s*cash|agendacash)[,.:!?\s]+/i, '')
+      .replace(/^(?:bot|assistente|cash)[,.:!?\s]+/i, '')
+      .trim();
+  }
+
+  // Normalizar valor no formato brasileiro para número
+  parseAmount(rawValue) {
+    if (!rawValue) return null;
+    let cleaned = rawValue.trim();
+
+    // Detectar multiplicadores: K ou "mil"
+    const hasK = /[kK]\s*$/.test(cleaned);
+    const hasMil = /\s*mil\s*$/i.test(cleaned);
+
+    cleaned = cleaned
+      .replace(/\s*[kK]\s*$/, '')
+      .replace(/\s*mil\s*$/i, '')
+      .replace(/r?\$\s*/gi, '')
+      .replace(/\s*reais?\s*$/i, '')
+      .trim();
+
+    // Formato brasileiro: 1.500,00 → 1500.00
+    // Se tem vírgula e ponto: "1.500,00" → ponto é milhar, vírgula é decimal
+    if (/\d+\.\d{3}/.test(cleaned) && cleaned.includes(',')) {
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+    }
+    // Se tem ponto como milhar sem vírgula: "1.500" → 1500
+    else if (/^\d{1,3}(\.\d{3})+$/.test(cleaned)) {
+      cleaned = cleaned.replace(/\./g, '');
+    }
+    // Se tem vírgula como decimal: "50,00" → 50.00
+    else if (cleaned.includes(',')) {
+      cleaned = cleaned.replace(',', '.');
+    }
+
+    let amount = parseFloat(cleaned);
+    if (isNaN(amount)) return null;
+
+    if (hasK || hasMil) amount *= 1000;
+
+    return amount;
+  }
+
   parseFinancialCommand(text) {
+    // Limpar prefixo do bot (ex: "Agenda Cash, gastei 50..." → "gastei 50...")
+    const cleanText = this.stripBotPrefix(text);
+
     const extracted = {
       amount: null,
       establishment: null,
       category: "outros",
-      description: text,
+      description: cleanText,
       type: "expense",
       confidence: "medium",
     };
 
     // Detectar se é receita
-    if (/\b(receb[ei]|ganhei|entrou|salário|salario|freelance|renda)\b/i.test(text)) {
+    if (/\b(receb[ei]|ganhei|entrou|salário|salario|freelance|renda)\b/i.test(cleanText)) {
       extracted.type = "income";
     }
 
-    // Extrair valor com suporte a K
+    // Extrair valor — usar [\d.,]+ para capturar números inteiros e com separadores BR
     const valuePatterns = [
-      /(?:gastei|comprei|paguei|pago|pix\s+de|transferi|mandei|enviei|recebi|ganhei)\s+(?:r\$?\s*)?(\d+(?:[,\.]\d{1,2})?)\s*([kK])?/gi,
-      /r\$?\s*(\d+(?:[,\.]\d{1,2})?)\s*([kK])?/gi,
-      /(\d+(?:[,\.]\d{1,2})?)\s*([kK])?\s+(?:reais|no|na|do|da|em|pro|pra)/gi,
+      /(?:gastei|comprei|paguei|pago|pix\s+de|transferi|mandei|enviei|recebi|ganhei)\s+(?:r\$?\s*)?([\d.,]+)\s*([kK])?(?:\s*(?:mil|reais?))?/gi,
+      /r\$?\s*([\d.,]+)\s*([kK])?(?:\s*(?:mil|reais?))?/gi,
+      /([\d.,]+)\s*([kK])?\s*(?:mil\s+)?(?:reais|no|na|do|da|em|pro|pra)/gi,
     ];
 
     for (const pattern of valuePatterns) {
-      const match = [...text.matchAll(pattern)][0];
+      const match = [...cleanText.matchAll(pattern)][0];
       if (match) {
-        let amount = parseFloat(match[1].replace(",", "."));
-        if (match[2] && match[2].toLowerCase() === 'k') {
-          amount *= 1000;
+        let rawValue = match[1];
+        if (match[2]) rawValue += match[2]; // k/K
+        // Verificar se "mil" segue logo após o match
+        const matchEnd = match.index + match[0].length;
+        if (/^\s*mil\b/i.test(cleanText.slice(matchEnd))) {
+          rawValue += ' mil';
         }
-        if (amount > 0 && amount < 100000) {
+        const amount = this.parseAmount(rawValue);
+        if (amount > 0 && amount < 1000000) {
           extracted.amount = amount;
           break;
         }
       }
     }
 
-    extracted.establishment = this.extractEstablishment(text);
-    extracted.category = this.determineCategory(extracted.establishment, text);
-    extracted.confidence = this.calculateConfidence(extracted, text);
+    extracted.establishment = this.extractEstablishment(cleanText);
+    extracted.category = this.determineCategory(extracted.establishment, cleanText);
+    extracted.confidence = this.calculateConfidence(extracted, cleanText);
 
     return extracted;
   }
@@ -136,7 +190,7 @@ class WhisperService {
   determineCategory(establishment, text) {
     const lowerText = ((establishment || "") + " " + text).toLowerCase();
     const categories = {
-      alimentação: ["mercado", "supermercado", "restaurante", "lanchonete", "padaria", "pizza", "hambúrguer", "comida", "almoço", "jantar", "café"],
+      alimentação: ["mercado", "supermercado", "restaurante", "lanchonete", "padaria", "pizza", "hambúrguer", "comida", "almoço", "jantar", "café", "refrigerante", "bebida", "lanche", "açaí", "sorvete", "feira"],
       saúde: ["farmácia", "drogaria", "médico", "hospital", "remédio", "dentista"],
       transporte: ["posto", "gasolina", "uber", "taxi", "ônibus", "metrô", "estacionamento"],
       transferência: ["pix", "transferência", "transferi", "mandei", "enviei"],

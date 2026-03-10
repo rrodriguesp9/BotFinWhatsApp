@@ -99,7 +99,16 @@ class NaturalLanguageProcessor {
       // Calendário / Agenda Google
       calendar: [
         /(?:conectar|ligar|vincular|ativar)\s+(?:o?\s*)?(?:calendário|calendar|agenda|google)/i,
-        /(?:desconectar|remover|desativar|desvincular)\s+(?:o?\s*)?(?:calendário|calendar|agenda|google)/i
+        /(?:desconectar|remover|desativar|desvincular)\s+(?:o?\s*)?(?:calendário|calendar|agenda|google)/i,
+        /(?:meu\s+)?(?:calendário|calendar|agenda)\s*$/i,
+        /(?:status|ver)\s+(?:do?\s*)?(?:calendário|calendar|agenda)/i
+      ],
+
+      // Consulta por categoria: "quanto gastei em mercado?", "detalhes de outros", "gastos com transporte"
+      category_query: [
+        /(?:quanto\s+)?(?:gastei|gasto|despesas?)\s+(?:em|no|na|de|com)\s+([a-záàâãéèêíïóôõöúçñ\s]+)/i,
+        /(?:detalh(?:es?|ar)|itens?|o\s+que\s+(?:tem|compõe))\s+(?:de|do|da|em|no|na)\s+(?:categoria\s+)?([a-záàâãéèêíïóôõöúçñ\s]+)/i,
+        /(?:ver|mostrar|listar)\s+(?:gastos?|despesas?)\s+(?:de|do|da|em|no|na|com)\s+([a-záàâãéèêíïóôõöúçñ\s]+)/i
       ],
 
       // Consultas de saldo
@@ -181,6 +190,15 @@ class NaturalLanguageProcessor {
         };
         break;
 
+      case 'category_query':
+        extracted.extracted = {
+          type: 'category_query',
+          category: this.normalizeCategoryName(match[1]?.trim()),
+          rawCategory: match[1]?.trim(),
+          period: this.extractPeriod(originalText)
+        };
+        break;
+
       case 'balance':
         extracted.extracted = {
           type: 'query',
@@ -211,7 +229,8 @@ class NaturalLanguageProcessor {
       case 'calendar':
         extracted.extracted = {
           type: 'calendar',
-          action: /desconectar|remover|desativar|desvincular/i.test(originalText) ? 'disconnect' : 'connect'
+          action: /desconectar|remover|desativar|desvincular/i.test(originalText) ? 'disconnect' :
+                  /(?:meu|status|ver)\s/i.test(originalText) || /calendário$|calendar$|agenda$/i.test(originalText) ? 'status' : 'connect'
         };
         break;
 
@@ -337,61 +356,61 @@ class NaturalLanguageProcessor {
   extractCategory(text) {
     const categoryMap = {
       // Transporte
-      'uber': 'transporte',
-      '99': 'transporte',
-      'taxi': 'transporte',
-      'ônibus': 'transporte',
-      'metrô': 'transporte',
-      'transporte': 'transporte',
-      
-      // Alimentação
-      'almoço': 'alimentação',
-      'jantar': 'alimentação',
-      'café': 'alimentação',
-      'lanche': 'alimentação',
-      'restaurante': 'alimentação',
-      'alimentação': 'alimentação',
-      
-      // Mercado
-      'mercado': 'mercado',
-      'supermercado': 'mercado',
-      'feira': 'mercado',
-      'compras': 'mercado',
-      
-      // Transferências
-      'pix': 'transferência',
-      'transferência': 'transferência',
-      'transferencia': 'transferência',
+      'uber': 'transporte', '99': 'transporte', 'taxi': 'transporte',
+      'ônibus': 'transporte', 'metrô': 'transporte', 'transporte': 'transporte',
+      'gasolina': 'transporte', 'combustível': 'transporte', 'posto': 'transporte',
+      'estacionamento': 'transporte', 'pedágio': 'transporte', 'passagem': 'transporte',
 
-      // Contas
-      'conta': 'contas',
-      'boleto': 'contas',
-      'luz': 'contas',
-      'água': 'contas',
-      'internet': 'contas',
-      'telefone': 'contas',
-      
-      // Lazer
-      'cinema': 'lazer',
-      'teatro': 'lazer',
-      'show': 'lazer',
-      'bar': 'lazer',
-      'balada': 'lazer',
-      'lazer': 'lazer',
-      
+      // Alimentação
+      'almoço': 'alimentação', 'jantar': 'alimentação', 'café': 'alimentação',
+      'lanche': 'alimentação', 'restaurante': 'alimentação', 'alimentação': 'alimentação',
+      'pizza': 'alimentação', 'hambúrguer': 'alimentação', 'sushi': 'alimentação',
+      'açaí': 'alimentação', 'sorvete': 'alimentação', 'padaria': 'alimentação',
+      'ifood': 'alimentação', 'delivery': 'alimentação', 'comida': 'alimentação',
+      'lanchonete': 'alimentação',
+
+      // Mercado / Supermercado
+      'mercado': 'mercado', 'supermercado': 'mercado', 'feira': 'mercado',
+      'compras': 'mercado', 'hortifruti': 'mercado', 'atacadão': 'mercado',
+      'refrigerante': 'mercado', 'bebida': 'mercado',
+
+      // Transferências
+      'pix': 'transferência', 'transferência': 'transferência',
+      'transferencia': 'transferência', 'ted': 'transferência', 'doc': 'transferência',
+
+      // Contas / Moradia
+      'conta': 'contas', 'boleto': 'contas', 'luz': 'contas', 'água': 'contas',
+      'internet': 'contas', 'telefone': 'contas', 'aluguel': 'contas',
+      'condomínio': 'contas', 'gás': 'contas', 'iptu': 'contas', 'ipva': 'contas',
+      'seguro': 'contas', 'fatura': 'contas', 'mensalidade': 'contas',
+
+      // Lazer / Entretenimento
+      'cinema': 'lazer', 'teatro': 'lazer', 'show': 'lazer', 'bar': 'lazer',
+      'balada': 'lazer', 'lazer': 'lazer', 'netflix': 'lazer', 'spotify': 'lazer',
+      'jogo': 'lazer', 'game': 'lazer', 'viagem': 'lazer', 'hotel': 'lazer',
+      'festa': 'lazer', 'parque': 'lazer',
+
       // Saúde
-      'farmácia': 'saúde',
-      'médico': 'saúde',
-      'dentista': 'saúde',
-      'exame': 'saúde',
-      'saúde': 'saúde',
-      
+      'farmácia': 'saúde', 'farmacia': 'saúde', 'médico': 'saúde', 'medico': 'saúde',
+      'dentista': 'saúde', 'exame': 'saúde', 'saúde': 'saúde', 'remédio': 'saúde',
+      'hospital': 'saúde', 'consulta': 'saúde', 'plano de saúde': 'saúde',
+      'academia': 'saúde',
+
       // Educação
-      'curso': 'educação',
-      'faculdade': 'educação',
-      'universidade': 'educação',
-      'livro': 'educação',
-      'educação': 'educação'
+      'curso': 'educação', 'faculdade': 'educação', 'universidade': 'educação',
+      'livro': 'educação', 'educação': 'educação', 'escola': 'educação',
+      'material escolar': 'educação', 'apostila': 'educação',
+
+      // Vestuário
+      'roupa': 'vestuário', 'calçado': 'vestuário', 'sapato': 'vestuário',
+      'tênis': 'vestuário', 'camisa': 'vestuário', 'calça': 'vestuário',
+      'vestido': 'vestuário', 'loja': 'vestuário',
+
+      // Assinaturas
+      'assinatura': 'assinaturas', 'plano': 'assinaturas',
+
+      // Pet
+      'pet': 'pet', 'veterinário': 'pet', 'ração': 'pet', 'petshop': 'pet'
     };
 
     const lowerText = text.toLowerCase();
@@ -405,16 +424,20 @@ class NaturalLanguageProcessor {
     return 'outros';
   }
 
-  // Extrair descrição
+  // Extrair descrição — preserva detalhes úteis como itens e local
   extractDescription(text) {
-    // Remover números e palavras comuns
     const cleanText = text
-      .replace(/r?\$?\s*[\d.,]+/gi, '')
+      .replace(/r?\$?\s*[\d.,]+\s*[kK]?/gi, '')
       .replace(/\s*(?:reais?|r\$)/gi, '')
-      .replace(/\b(?:gastei|paguei|recebi|ganhei|comprei|entrou)\b/gi, '')
-      .replace(/\b(?:de|com|no|na|em|para)\b/gi, '')
+      .replace(/\b(?:gastei|paguei|recebi|ganhei|comprei|entrou|depositei)\b/gi, '')
+      .replace(/^\s*(?:de|com|no|na|em|para)\s+/gi, '')
+      .replace(/\s{2,}/g, ' ')
       .trim();
 
+    // Capitalizar primeira letra
+    if (cleanText.length >= 2) {
+      return cleanText.charAt(0).toUpperCase() + cleanText.slice(1);
+    }
     return cleanText || 'Transação';
   }
 
@@ -473,6 +496,34 @@ class NaturalLanguageProcessor {
     return { type: 'savings', action: 'create', name: match[1]?.trim(), target: this.extractAmount(match[2]) };
   }
 
+  // Normalizar nome de categoria (input do usuário → categoria do banco)
+  normalizeCategoryName(input) {
+    if (!input) return 'outros';
+    const lower = input.toLowerCase().trim()
+      .replace(/[?!.,]+$/, '').trim(); // remover pontuação final
+
+    const aliases = {
+      'mercado': 'mercado', 'supermercado': 'mercado', 'feira': 'mercado', 'compras': 'mercado',
+      'alimentação': 'alimentação', 'alimentacao': 'alimentação', 'comida': 'alimentação',
+      'restaurante': 'alimentação', 'almoço': 'alimentação', 'jantar': 'alimentação',
+      'lanche': 'alimentação', 'café': 'alimentação',
+      'transporte': 'transporte', 'uber': 'transporte', 'taxi': 'transporte',
+      'ônibus': 'transporte', 'metrô': 'transporte', 'gasolina': 'transporte',
+      'transferência': 'transferência', 'transferencia': 'transferência', 'pix': 'transferência',
+      'contas': 'contas', 'conta': 'contas', 'luz': 'contas', 'água': 'contas',
+      'internet': 'contas', 'aluguel': 'contas', 'telefone': 'contas',
+      'lazer': 'lazer', 'cinema': 'lazer', 'bar': 'lazer', 'show': 'lazer',
+      'saúde': 'saúde', 'saude': 'saúde', 'farmácia': 'saúde', 'farmacia': 'saúde',
+      'médico': 'saúde', 'medico': 'saúde', 'dentista': 'saúde',
+      'educação': 'educação', 'educacao': 'educação', 'curso': 'educação',
+      'faculdade': 'educação', 'livro': 'educação',
+      'cofrinho': 'cofrinho',
+      'outros': 'outros'
+    };
+
+    return aliases[lower] || lower;
+  }
+
   // Extrair período
   extractPeriod(text) {
     const lowerText = text.toLowerCase();
@@ -500,7 +551,9 @@ class NaturalLanguageProcessor {
            `📊 **Consultas:**\n` +
            `• "Quanto tenho agora?"\n` +
            `• "Resumo da semana"\n` +
-           `• "Relatório do mês"\n\n` +
+           `• "Relatório do mês"\n` +
+           `• "Quanto gastei em mercado?" (detalhes por categoria)\n` +
+           `• "Detalhes de outros"\n\n` +
            
            `🎯 **Metas:**\n` +
            `• "Meta de mercado 600"\n` +
