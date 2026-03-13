@@ -39,6 +39,14 @@ try {
   console.log('⚠️ OpenAIOCRService não disponível:', e.message);
 }
 
+// Azure OpenAI NLP — NLP PRIMÁRIO (interpreta linguagem natural)
+let AzureOpenAINLPService = null;
+try {
+  AzureOpenAINLPService = require('../services/AzureOpenAINLPService');
+} catch (e) {
+  console.log('⚠️ AzureOpenAINLPService não disponível:', e.message);
+}
+
 // Groq NLP — fallback inteligente quando regex não entende (grátis)
 let GroqNLPService = null;
 try {
@@ -87,16 +95,30 @@ class BotController {
       console.log('⚠️ Vision OCR desativado (configure GEMINI_API_KEY ou OPENAI_API_KEY)');
     }
 
-    // NLP fallback — Groq (grátis, primário) ou OpenAI (pago, fallback)
+    // NLP PRIMÁRIO — Azure OpenAI (GPT-4.1, interpreta tudo)
+    if (AzureOpenAINLPService && process.env.AZURE_OPENAI_KEY) {
+      try {
+        this.primaryNLP = new AzureOpenAINLPService();
+        console.log('✅ Azure OpenAI NLP (primário — GPT-4.1) ativado');
+      } catch (e) {
+        this.primaryNLP = null;
+        console.log('⚠️ AzureOpenAINLPService falhou ao instanciar:', e.message);
+      }
+    } else {
+      this.primaryNLP = null;
+      console.log('⚠️ Azure OpenAI NLP desativado (configure AZURE_OPENAI_KEY)');
+    }
+
+    // NLP fallback — Groq (grátis) ou OpenAI (pago), usado quando Azure falha
     if (GroqNLPService && process.env.GROQ_API_KEY) {
       this.aiNLP = new GroqNLPService();
-      console.log('✅ Groq NLP (fallback inteligente — grátis) ativado');
+      console.log('✅ Groq NLP (fallback — grátis) ativado');
     } else if (OpenAINLPService && process.env.OPENAI_API_KEY) {
       this.aiNLP = new OpenAINLPService();
-      console.log('✅ OpenAI NLP (fallback inteligente — pago) ativado');
+      console.log('✅ OpenAI NLP (fallback — pago) ativado');
     } else {
       this.aiNLP = null;
-      console.log('⚠️ NLP AI desativado (configure GROQ_API_KEY ou OPENAI_API_KEY)');
+      console.log('⚠️ NLP AI fallback desativado (configure GROQ_API_KEY ou OPENAI_API_KEY)');
     }
 
     // Google Calendar — integração opcional
@@ -213,17 +235,35 @@ class BotController {
 
   // Lógica interna de processamento NLP (separada para reuso no fallback de OCR)
   async processTextMessageInternal(user, message) {
-    // Processar linguagem natural (regex primeiro)
-    let intent = this.nlp.processMessage(message);
-    console.log('🧠 Regex NLP:', intent.intention, 'confidence:', intent.confidence);
+    let intent;
 
-    // Se regex não entendeu ou confiança baixa, tentar IA (Groq/OpenAI)
-    if ((intent.intention === 'unknown' || intent.confidence < 0.4) && this.aiNLP) {
-      console.log('🤖 Tentando NLP AI fallback...');
-      const aiIntent = await this.aiNLP.processMessage(message);
-      console.log('🤖 NLP AI:', aiIntent.intention, 'confidence:', aiIntent.confidence);
-      if (aiIntent.intention !== 'unknown' && aiIntent.confidence > intent.confidence) {
-        intent = aiIntent;
+    // ESTRATÉGIA: IA primeiro (Azure OpenAI), regex como fallback
+    if (this.primaryNLP) {
+      console.log('🤖 Tentando Azure OpenAI NLP (primário)...');
+      intent = await this.primaryNLP.processMessage(message);
+      console.log('🤖 Azure NLP:', intent.intention, 'confidence:', intent.confidence, 'amount:', intent.extracted?.amount);
+
+      // Se Azure falhou, tentar regex como fallback
+      if (intent.intention === 'unknown' || intent.confidence === 0) {
+        console.log('🧠 Azure falhou, tentando regex fallback...');
+        const regexIntent = this.nlp.processMessage(message);
+        console.log('🧠 Regex NLP:', regexIntent.intention, 'confidence:', regexIntent.confidence);
+        if (regexIntent.intention !== 'unknown') {
+          intent = regexIntent;
+        }
+      }
+    } else {
+      // Sem Azure: usar regex + Groq/OpenAI fallback (comportamento antigo)
+      intent = this.nlp.processMessage(message);
+      console.log('🧠 Regex NLP:', intent.intention, 'confidence:', intent.confidence);
+
+      if ((intent.intention === 'unknown' || intent.confidence < 0.4) && this.aiNLP) {
+        console.log('🤖 Tentando NLP AI fallback...');
+        const aiIntent = await this.aiNLP.processMessage(message);
+        console.log('🤖 NLP AI:', aiIntent.intention, 'confidence:', aiIntent.confidence);
+        if (aiIntent.intention !== 'unknown' && aiIntent.confidence > intent.confidence) {
+          intent = aiIntent;
+        }
       }
     }
 
